@@ -10,8 +10,16 @@
         oneditprepare: function() {
             const node = this;
             
+            // Check if this is a new node (not yet deployed)
+            const isNewNode = !node.id;
+            
             // Load devices list
             function loadDevices() {
+                if (!node.id) {
+                    $('#node-config-devices-list').html('<li><em>Save controller first to view devices</em></li>');
+                    return;
+                }
+                
                 $.getJSON(`matter-controller/${node.id}/devices`, function(data) {
                     const devicesList = $('#node-config-devices-list');
                     devicesList.empty();
@@ -41,6 +49,19 @@
             
             // Commission new device
             $('#node-config-commission-button').click(function() {
+                // Check if controller has been saved/deployed
+                if (!node.id) {
+                    RED.notify("Please click 'Add' to save the controller first, then reopen to commission devices", "warning");
+                    $('#node-config-commission-status').html(
+                        '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 3px;">' +
+                        '<strong>⚠ Save Required</strong><br>' +
+                        'Click "Add" below to save this controller first.<br>' +
+                        'Then reopen this dialog to commission devices.' +
+                        '</div>'
+                    );
+                    return;
+                }
+                
                 const pairingCode = $('#node-config-pairing-code').val().trim();
                 const deviceName = $('#node-config-device-name').val().trim();
                 
@@ -78,8 +99,18 @@
                 });
             });
             
-            // Initial load
-            if (node.id) {
+            // Show warning if this is a new node
+            if (isNewNode) {
+                $('#node-config-commission-status').html(
+                    '<div style="background: #d1ecf1; border: 1px solid #0c5460; padding: 10px; border-radius: 3px; color: #0c5460;">' +
+                    '<strong>ℹ First Time Setup</strong><br>' +
+                    '1. Click "Add" below to save this controller<br>' +
+                    '2. Deploy your changes (if needed)<br>' +
+                    '3. Reopen this dialog to commission devices' +
+                    '</div>'
+                );
+                $('#node-config-devices-list').html('<li><em>Save controller first to view devices</em></li>');
+            } else {
                 loadDevices();
             }
         }
@@ -142,16 +173,28 @@
     <p>This node manages the Matter controller and handles device commissioning. 
     Use it to add Matter devices to your Node-RED flow.</p>
     
+    <h3>First Time Setup</h3>
+    <ol>
+        <li>Create a new Matter Controller configuration</li>
+        <li>Give it a name</li>
+        <li><strong>Click "Add" to save the controller</strong></li>
+        <li>Deploy your flow (if prompted)</li>
+        <li>Reopen the controller configuration to commission devices</li>
+    </ol>
+    
     <h3>Commissioning Devices</h3>
     <ol>
         <li>Put your Matter device in pairing mode</li>
         <li>Enter the pairing code (from QR code or device manual)</li>
         <li>Optionally give the device a friendly name</li>
         <li>Click "Commission Device"</li>
+        <li>Wait 30-60 seconds for commissioning to complete</li>
     </ol>
     
     <h3>Details</h3>
     <p>Once commissioned, devices will automatically reconnect when Node-RED starts. 
     Device data is stored in the Node-RED user directory under <code>.node-red-matter</code>.</p>
+    
+    <p><strong>Note:</strong> You must save the controller configuration before you can commission devices.</p>
 </script>
 
