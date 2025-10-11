@@ -137,22 +137,15 @@
             if (isNewNode) {
                 $('#node-config-commission-status').html(
                     '<div style="background: #d1ecf1; border: 1px solid #0c5460; padding: 15px; border-radius: 3px; color: #0c5460;">' +
-                    '<strong>ℹ️ First Time Setup - READ THIS</strong><br><br>' +
-                    '<strong>Step 1:</strong> Enter a name above (e.g., "Home Matter")<br>' +
+                    '<strong>ℹ️ First Time Setup</strong><br><br>' +
+                    '<strong>Step 1:</strong> Enter controller name above<br>' +
                     '<strong>Step 2:</strong> Click "Add" button below<br>' +
-                    '<strong>Step 3:</strong> Wait 10-15 seconds<br>' +
-                    '<strong>Step 4:</strong> REOPEN this dialog<br>' +
-                    '<strong>Step 5:</strong> Enter pairing code and commission<br><br>' +
-                    '⚠️ You CANNOT commission in this dialog session.<br>' +
-                    'You must click "Add" first, then reopen!' +
+                    '<strong>Step 3:</strong> Click "Deploy" (top-right)<br>' +
+                    '<strong>Step 4:</strong> Wait 15 seconds<br>' +
+                    '<strong>Step 5:</strong> Reopen this dialog to commission devices' +
                     '</div>'
                 );
-                $('#node-config-devices-list').html('<li><em>Click Add first, then reopen this dialog</em></li>');
-                
-                // Disable commissioning fields for new nodes
-                $('#node-config-pairing-code').prop('disabled', true).val('').attr('placeholder', 'Save controller first by clicking Add below');
-                $('#node-config-device-name').prop('disabled', true).val('').attr('placeholder', 'Not available yet');
-                $('#node-config-commission-button').prop('disabled', true);
+                $('#node-config-devices-list').html('<li><em>Controller not created yet. Click Add, then Deploy.</em></li>');
             } else {
                 // Check if controller is initialized
                 $.getJSON(`matter-controller/${node.id}/devices`, function() {
@@ -164,43 +157,30 @@
                         'You can now commission devices using the form below.' +
                         '</div>'
                     );
-                    // Enable commissioning fields
-                    $('#node-config-pairing-code').prop('disabled', false);
-                    $('#node-config-device-name').prop('disabled', false);
-                    $('#node-config-commission-button').prop('disabled', false);
                 }).fail(function(xhr) {
-                    // Disable commissioning until ready
-                    $('#node-config-pairing-code').prop('disabled', true).val('').attr('placeholder', 'Controller not ready yet');
-                    $('#node-config-device-name').prop('disabled', true).val('');
-                    $('#node-config-commission-button').prop('disabled', true);
-                    
                     if (xhr.status === 404) {
-                        // Controller not created (user edited but didn't click Update)
+                        // Controller not deployed yet
                         $('#node-config-commission-status').html(
                             '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 3px;">' +
-                            '<strong>⚠️ Controller Not Created Yet</strong><br><br>' +
-                            'You made changes but haven\'t saved them.<br><br>' +
-                            '<strong>To commission devices:</strong><br>' +
-                            '1. Click "Update" button below<br>' +
-                            '2. Wait 10-15 seconds<br>' +
-                            '3. Close this dialog<br>' +
-                            '4. Reopen to commission devices' +
+                            '<strong>⚠️ Controller Not Deployed</strong><br><br>' +
+                            'You clicked "Add" but haven\'t deployed yet.<br><br>' +
+                            '<strong>To activate the controller:</strong><br>' +
+                            '1. Click "Done" or "Update" below<br>' +
+                            '2. Click "Deploy" button (top-right)<br>' +
+                            '3. Wait 15 seconds<br>' +
+                            '4. Reopen this dialog to commission devices' +
                             '</div>'
                         );
                     } else {
                         // Controller initializing
                         $('#node-config-commission-status').html(
                             '<div style="background: #d1ecf1; border: 1px solid #0c5460; padding: 15px; border-radius: 3px; color: #0c5460;">' +
-                            '<strong>⏳ Controller Still Initializing...</strong><br><br>' +
-                            'The Matter controller is starting up (takes 10-20 seconds).<br><br>' +
-                            '<strong>What to do:</strong><br>' +
-                            '1. Close this dialog<br>' +
-                            '2. Wait 10 more seconds<br>' +
-                            '3. Reopen and try again' +
+                            '<strong>⏳ Controller Initializing...</strong><br><br>' +
+                            'Please wait 10-15 seconds and reopen this dialog.' +
                             '</div>'
                         );
                     }
-                    $('#node-config-devices-list').html('<li><em>Waiting for controller...</em></li>');
+                    $('#node-config-devices-list').html('<li><em>Deploy controller first to view devices</em></li>');
                 });
             }
         }
