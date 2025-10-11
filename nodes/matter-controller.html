@@ -49,37 +49,45 @@
             
             // Commission new device
             $('#node-config-commission-button').click(function() {
-                // Check if controller has been saved/deployed
+                // Check if controller has been saved
                 if (!node.id) {
-                    RED.notify("Please click 'Add' to save the controller first, then Deploy and reopen", "warning");
+                    RED.notify("Please click 'Add' to save the controller first", "warning");
                     $('#node-config-commission-status').html(
                         '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 3px;">' +
-                        '<strong>⚠ Save and Deploy Required</strong><br>' +
-                        '1. Click "Add" below to save this controller<br>' +
-                        '2. Click "Deploy" button (top-right)<br>' +
-                        '3. Reopen this dialog to commission devices' +
+                        '<strong>⚠ Save Required</strong><br>' +
+                        'Click "Add" button below to save this controller first.' +
                         '</div>'
                     );
                     return;
                 }
                 
-                // Test if node is actually deployed by checking if it responds
+                // Check if controller is initialized by testing the endpoint
+                $('#node-config-commission-status').html('<span style="color: orange;">Checking controller status...</span>');
+                
                 $.getJSON(`matter-controller/${node.id}/devices`, function() {
-                    // Node is deployed, proceed with commissioning UI
+                    // Controller is initialized and ready
                     proceedWithCommissioning();
-                }).fail(function() {
-                    // Node not deployed yet
-                    RED.notify("Please Deploy the flow first, then reopen to commission devices", "warning");
-                    $('#node-config-commission-status').html(
-                        '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 3px;">' +
-                        '<strong>⚠ Deploy Required</strong><br>' +
-                        'You saved the controller, but it\'s not deployed yet.<br>' +
-                        '1. Click "Update" or "Done" below<br>' +
-                        '2. Click "Deploy" button (top-right in Node-RED)<br>' +
-                        '3. Wait 10 seconds<br>' +
-                        '4. Reopen this dialog to commission devices' +
-                        '</div>'
-                    );
+                }).fail(function(xhr) {
+                    if (xhr.status === 404) {
+                        // Controller not created yet - need to click Add/Update
+                        RED.notify("Click 'Add' or 'Update' button first to create the controller", "warning");
+                        $('#node-config-commission-status').html(
+                            '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 3px;">' +
+                            '<strong>⚠ Controller Not Created</strong><br>' +
+                            'Click "Add" or "Update" button below to create the controller.' +
+                            '</div>'
+                        );
+                    } else {
+                        // Controller exists but may still be initializing
+                        RED.notify("Controller is still initializing, please wait...", "warning");
+                        $('#node-config-commission-status').html(
+                            '<div style="background: #d1ecf1; border: 1px solid #0c5460; padding: 10px; border-radius: 3px; color: #0c5460;">' +
+                            '<strong>⏳ Controller Initializing</strong><br>' +
+                            'The Matter controller is starting up (this can take 10-20 seconds).<br>' +
+                            'Please wait a moment and try again.' +
+                            '</div>'
+                        );
+                    }
                 });
             });
             
@@ -125,30 +133,44 @@
             if (isNewNode) {
                 $('#node-config-commission-status').html(
                     '<div style="background: #d1ecf1; border: 1px solid #0c5460; padding: 10px; border-radius: 3px; color: #0c5460;">' +
-                    '<strong>ℹ First Time Setup - Important Steps</strong><br>' +
-                    '1. Click "Add" button below<br>' +
-                    '2. Click "Deploy" button (top-right of Node-RED)<br>' +
-                    '3. Wait 10 seconds for controller to initialize<br>' +
-                    '4. Reopen this dialog to commission devices' +
+                    '<strong>ℹ First Time Setup</strong><br>' +
+                    '1. Click "Add" button below to create the controller<br>' +
+                    '2. Wait 10-15 seconds for initialization<br>' +
+                    '3. Then you can commission devices here' +
                     '</div>'
                 );
-                $('#node-config-devices-list').html('<li><em>Save and deploy first to view devices</em></li>');
+                $('#node-config-devices-list').html('<li><em>Click Add to create controller</em></li>');
             } else {
-                // Check if node is actually deployed
+                // Check if controller is initialized
                 $.getJSON(`matter-controller/${node.id}/devices`, function() {
+                    // Controller is ready
                     loadDevices();
-                }).fail(function() {
                     $('#node-config-commission-status').html(
-                        '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 3px;">' +
-                        '<strong>⚠ Not Deployed</strong><br>' +
-                        'Controller is saved but not deployed yet.<br>' +
-                        '1. Click "Done" below<br>' +
-                        '2. Click "Deploy" (top-right)<br>' +
-                        '3. Wait 10 seconds<br>' +
-                        '4. Reopen to commission devices' +
+                        '<div style="background: #d4edda; border: 1px solid #28a745; padding: 10px; border-radius: 3px; color: #155724;">' +
+                        '<strong>✓ Controller Ready</strong><br>' +
+                        'You can now commission devices using the form below.' +
                         '</div>'
                     );
-                    $('#node-config-devices-list').html('<li><em>Deploy controller first</em></li>');
+                }).fail(function(xhr) {
+                    if (xhr.status === 404) {
+                        // Controller not created (user edited but didn't click Update)
+                        $('#node-config-commission-status').html(
+                            '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 3px;">' +
+                            '<strong>⚠ Changes Not Saved</strong><br>' +
+                            'Click "Update" button below to save your changes.' +
+                            '</div>'
+                        );
+                    } else {
+                        // Controller initializing
+                        $('#node-config-commission-status').html(
+                            '<div style="background: #d1ecf1; border: 1px solid #0c5460; padding: 10px; border-radius: 3px; color: #0c5460;">' +
+                            '<strong>⏳ Controller Initializing...</strong><br>' +
+                            'Please wait 10-15 seconds for the Matter controller to start.<br>' +
+                            'Close and reopen this dialog in a moment.' +
+                            '</div>'
+                        );
+                    }
+                    $('#node-config-devices-list').html('<li><em>Waiting for controller...</em></li>');
                 });
             }
         }
