@@ -19,6 +19,7 @@ module.exports = function(RED) {
         // Storage path in Node-RED user directory
         const storageDir = path.join(RED.settings.userDir || os.homedir(), ".node-red-matter");
         
+        console.log(`[Matter] Creating controller node with ID: ${node.id}, Name: ${node.name}`);
         node.log(`Initializing Matter Controller with storage: ${storageDir}`);
         
         // Initialize Matter controller
@@ -259,9 +260,12 @@ module.exports = function(RED) {
     
     // HTTP endpoints for device management
     RED.httpAdmin.post("/matter-controller/:id/commission", RED.auth.needsPermission('matter-controller.write'), async function(req, res) {
+        console.log("[Matter] Commission request for node ID:", req.params.id);
         const node = RED.nodes.getNode(req.params.id);
+        console.log("[Matter] Found node:", node ? "YES" : "NO");
         if (!node) {
-            res.status(404).json({ error: "Controller node not found" });
+            console.log("[Matter] ERROR: Controller node not found for ID:", req.params.id);
+            res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
             return;
         }
         
@@ -280,14 +284,17 @@ module.exports = function(RED) {
     });
     
     RED.httpAdmin.get("/matter-controller/:id/devices", RED.auth.needsPermission('matter-controller.read'), function(req, res) {
+        console.log("[Matter] Devices request for node ID:", req.params.id);
         const node = RED.nodes.getNode(req.params.id);
+        console.log("[Matter] Found node:", node ? "YES - initialized: " + node.isInitialized : "NO");
         if (!node) {
-            res.status(404).json({ error: "Controller node not found" });
+            console.log("[Matter] ERROR: Controller node not found for ID:", req.params.id);
+            res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
             return;
         }
         
         const devices = node.getDevices();
-        res.json({ devices });
+        res.json({ devices, initialized: node.isInitialized });
     });
 };
 
