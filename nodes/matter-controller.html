@@ -1,0 +1,157 @@
+<script type="text/javascript">
+    RED.nodes.registerType('matter-controller', {
+        category: 'config',
+        defaults: {
+            name: { value: "" }
+        },
+        label: function() {
+            return this.name || "Matter Controller";
+        },
+        oneditprepare: function() {
+            const node = this;
+            
+            // Load devices list
+            function loadDevices() {
+                $.getJSON(`matter-controller/${node.id}/devices`, function(data) {
+                    const devicesList = $('#node-config-devices-list');
+                    devicesList.empty();
+                    
+                    if (data.devices && data.devices.length > 0) {
+                        data.devices.forEach(function(device) {
+                            const status = device.connected ? 
+                                '<span style="color: green;">●</span> Connected' : 
+                                '<span style="color: red;">●</span> Disconnected';
+                            
+                            devicesList.append(
+                                `<li>
+                                    <strong>${device.name || device.nodeId}</strong><br>
+                                    Node ID: ${device.nodeId}<br>
+                                    Status: ${status}<br>
+                                    ${device.commissioned ? 'Commissioned: ' + new Date(device.commissioned).toLocaleString() : ''}
+                                </li>`
+                            );
+                        });
+                    } else {
+                        devicesList.append('<li><em>No devices commissioned yet</em></li>');
+                    }
+                }).fail(function() {
+                    $('#node-config-devices-list').html('<li><em>Failed to load devices</em></li>');
+                });
+            }
+            
+            // Commission new device
+            $('#node-config-commission-button').click(function() {
+                const pairingCode = $('#node-config-pairing-code').val().trim();
+                const deviceName = $('#node-config-device-name').val().trim();
+                
+                if (!pairingCode) {
+                    RED.notify("Please enter a pairing code", "error");
+                    return;
+                }
+                
+                $('#node-config-commission-status').html('<span style="color: orange;">Commissioning device...</span>');
+                
+                $.ajax({
+                    url: `matter-controller/${node.id}/commission`,
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        pairingCode: pairingCode,
+                        deviceName: deviceName
+                    }),
+                    success: function(result) {
+                        $('#node-config-commission-status').html(
+                            `<span style="color: green;">✓ ${result.message} (Node ID: ${result.nodeId})</span>`
+                        );
+                        $('#node-config-pairing-code').val('');
+                        $('#node-config-device-name').val('');
+                        
+                        // Reload devices list
+                        setTimeout(loadDevices, 1000);
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON ? xhr.responseJSON.error : 'Unknown error';
+                        $('#node-config-commission-status').html(
+                            `<span style="color: red;">✗ ${error}</span>`
+                        );
+                    }
+                });
+            });
+            
+            // Initial load
+            if (node.id) {
+                loadDevices();
+            }
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="matter-controller">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-config-input-name" placeholder="Matter Controller">
+    </div>
+    
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
+            <strong>Commission New Device</strong>
+        </label>
+    </div>
+    
+    <div class="form-row">
+        <label for="node-config-pairing-code"><i class="fa fa-key"></i> Pairing Code</label>
+        <input type="text" id="node-config-pairing-code" placeholder="Enter Matter pairing code">
+        <div style="margin-top: 5px; font-size: 0.9em; color: #666;">
+            Enter the Matter pairing code from your device (e.g., from QR code or manual code)
+        </div>
+    </div>
+    
+    <div class="form-row">
+        <label for="node-config-device-name"><i class="fa fa-tag"></i> Device Name</label>
+        <input type="text" id="node-config-device-name" placeholder="Optional device name">
+    </div>
+    
+    <div class="form-row">
+        <label></label>
+        <button type="button" id="node-config-commission-button" class="red-ui-button">
+            <i class="fa fa-plus"></i> Commission Device
+        </button>
+    </div>
+    
+    <div class="form-row">
+        <div id="node-config-commission-status" style="padding: 10px;"></div>
+    </div>
+    
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 20px;">
+            <strong>Commissioned Devices</strong>
+        </label>
+    </div>
+    
+    <div class="form-row">
+        <ul id="node-config-devices-list" style="list-style: none; padding: 10px; background: #f9f9f9; border-radius: 3px;">
+            <li><em>Loading devices...</em></li>
+        </ul>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="matter-controller">
+    <p>Configuration node for Matter smart home controller.</p>
+    
+    <h3>About</h3>
+    <p>This node manages the Matter controller and handles device commissioning. 
+    Use it to add Matter devices to your Node-RED flow.</p>
+    
+    <h3>Commissioning Devices</h3>
+    <ol>
+        <li>Put your Matter device in pairing mode</li>
+        <li>Enter the pairing code (from QR code or device manual)</li>
+        <li>Optionally give the device a friendly name</li>
+        <li>Click "Commission Device"</li>
+    </ol>
+    
+    <h3>Details</h3>
+    <p>Once commissioned, devices will automatically reconnect when Node-RED starts. 
+    Device data is stored in the Node-RED user directory under <code>.node-red-matter</code>.</p>
+</script>
+

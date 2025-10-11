@@ -1,0 +1,173 @@
+<script type="text/javascript">
+    RED.nodes.registerType('matter-device', {
+        category: 'Matter',
+        color: '#4A90E2',
+        defaults: {
+            name: { value: "" },
+            controller: { value: "", type: "matter-controller", required: true },
+            device: { value: "", required: true },
+            deviceType: { value: "contact" },
+            outputOnChange: { value: true },
+            pollInterval: { value: 0 }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "bridge.png",
+        label: function() {
+            return this.name || "matter device";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function() {
+            const node = this;
+            
+            // Load devices when controller is selected
+            $('#node-input-controller').change(function() {
+                const controllerId = $(this).val();
+                if (!controllerId) {
+                    $('#node-input-device').html('<option value="">Select a controller first</option>');
+                    return;
+                }
+                
+                $('#node-input-device').html('<option value="">Loading...</option>');
+                
+                $.getJSON(`matter-controller/${controllerId}/device-list`, function(devices) {
+                    const deviceSelect = $('#node-input-device');
+                    deviceSelect.empty();
+                    
+                    if (devices && devices.length > 0) {
+                        deviceSelect.append('<option value="">Select device...</option>');
+                        devices.forEach(function(device) {
+                            const selected = device.nodeId === node.device ? 'selected' : '';
+                            deviceSelect.append(
+                                `<option value="${device.nodeId}" ${selected}>${device.name || device.nodeId}</option>`
+                            );
+                        });
+                    } else {
+                        deviceSelect.append('<option value="">No devices available</option>');
+                    }
+                }).fail(function() {
+                    $('#node-input-device').html('<option value="">Failed to load devices</option>');
+                });
+            });
+            
+            // Trigger initial load if controller is already set
+            if (node.controller) {
+                $('#node-input-controller').trigger('change');
+            }
+            
+            // Show/hide poll interval based on output on change
+            function updatePollIntervalVisibility() {
+                const outputOnChange = $('#node-input-outputOnChange').is(':checked');
+                if (outputOnChange) {
+                    $('.form-row-poll-interval').hide();
+                } else {
+                    $('.form-row-poll-interval').show();
+                }
+            }
+            
+            $('#node-input-outputOnChange').change(updatePollIntervalVisibility);
+            updatePollIntervalVisibility();
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="matter-device">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Device name">
+    </div>
+    
+    <div class="form-row">
+        <label for="node-input-controller"><i class="fa fa-globe"></i> Controller</label>
+        <input type="text" id="node-input-controller">
+    </div>
+    
+    <div class="form-row">
+        <label for="node-input-device"><i class="fa fa-microchip"></i> Device</label>
+        <select id="node-input-device">
+            <option value="">Select a controller first</option>
+        </select>
+    </div>
+    
+    <div class="form-row">
+        <label for="node-input-deviceType"><i class="fa fa-cog"></i> Type</label>
+        <select id="node-input-deviceType">
+            <option value="contact">Contact Sensor</option>
+            <option value="booleanState">Boolean State</option>
+        </select>
+    </div>
+    
+    <div class="form-row">
+        <label for="node-input-outputOnChange"><i class="fa fa-bell"></i> Output</label>
+        <input type="checkbox" id="node-input-outputOnChange" style="display: inline-block; width: auto; margin: 0 5px;">
+        <span>Output on state change</span>
+        <div style="margin-top: 5px; font-size: 0.9em; color: #666;">
+            Automatically send messages when device state changes
+        </div>
+    </div>
+    
+    <div class="form-row form-row-poll-interval">
+        <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll Interval</label>
+        <input type="number" id="node-input-pollInterval" min="0" step="1" placeholder="0">
+        <span style="margin-left: 5px;">seconds (0 = no polling)</span>
+        <div style="margin-top: 5px; font-size: 0.9em; color: #666;">
+            How often to poll the device for state (only when not using output on change)
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="matter-device">
+    <p>Receives state updates from a Matter device.</p>
+    
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">any</span></dt>
+        <dd>Sending any message will trigger an immediate device state read.</dd>
+    </dl>
+    
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">string</span></dt>
+        <dd>For contact sensors: "open" or "closed"</dd>
+        
+        <dt>state <span class="property-type">boolean</span></dt>
+        <dd>Raw boolean state value from the device</dd>
+        
+        <dt>topic <span class="property-type">string</span></dt>
+        <dd>Topic in format: matter/&lt;nodeId&gt;</dd>
+        
+        <dt>device <span class="property-type">object</span></dt>
+        <dd>Device information including nodeId and type</dd>
+        
+        <dt>timestamp <span class="property-type">string</span></dt>
+        <dd>ISO timestamp of when the state was read</dd>
+    </dl>
+    
+    <h3>Details</h3>
+    <p>This node monitors a Matter device and outputs its state. For contact sensors,
+    it reports whether the contact is "open" or "closed".</p>
+    
+    <h4>Output on State Change</h4>
+    <p>When enabled (default), the node subscribes to device events and automatically
+    outputs a message whenever the state changes. This is the most efficient method.</p>
+    
+    <h4>Polling</h4>
+    <p>When "Output on state change" is disabled, you can set a poll interval to 
+    regularly check the device state. Set to 0 to disable automatic polling and only
+    read state when an input message is received.</p>
+    
+    <h3>Example Output</h3>
+    <pre>{
+  "payload": "closed",
+  "state": false,
+  "topic": "matter/12345",
+  "device": {
+    "nodeId": "12345",
+    "type": "contact"
+  },
+  "timestamp": "2025-10-11T12:34:56.789Z"
+}</pre>
+</script>
+
