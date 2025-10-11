@@ -87,16 +87,26 @@ module.exports = function(RED) {
                 node.log(`Commissioning device with code: ${pairingCode}`);
                 node.status({ fill: "yellow", shape: "ring", text: "commissioning..." });
                 
-                // Commission the device
+                // Parse the pairing code - could be QR code or manual code
+                let commissioningData;
+                
+                if (pairingCode.startsWith('MT:')) {
+                    // QR Code format
+                    const { QrPairingCodeCodec } = require("@project-chip/matter-node.js/schema");
+                    commissioningData = QrPairingCodeCodec.decode(pairingCode);
+                } else {
+                    // Manual pairing code (11 digits)
+                    const { ManualPairingCodeCodec } = require("@project-chip/matter-node.js/schema");
+                    commissioningData = ManualPairingCodeCodec.decode(pairingCode);
+                }
+                
+                node.log(`Parsed commissioning data:`, commissioningData);
+                
+                // Commission the device using parsed data
                 const nodeId = await node.commissioningController.commissionNode({
                     discovery: {
-                        knownAddress: undefined,
-                        identifierData: {
-                            setupPin: undefined, // Will be derived from pairing code
-                            longDiscriminator: undefined,
-                        },
+                        identifierData: commissioningData,
                     },
-                    passcode: pairingCode,
                 });
                 
                 node.log(`Device commissioned successfully with NodeId: ${nodeId}`);
