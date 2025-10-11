@@ -7,6 +7,10 @@
         label: function() {
             return this.name || "Matter Controller";
         },
+        oneditsave: function() {
+            // This runs when Add/Update is clicked - log for debugging
+            console.log("Matter controller saved with name:", this.name);
+        },
         oneditprepare: function() {
             const node = this;
             
@@ -204,7 +208,7 @@
     
     <div class="form-row">
         <label></label>
-        <button type="button" id="node-config-commission-button" class="red-ui-button">
+        <button type="button" id="node-config-commission-button" class="red-ui-button" onclick="return false;">
             <i class="fa fa-plus"></i> Commission Device
         </button>
     </div>
