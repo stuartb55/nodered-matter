@@ -2,6 +2,9 @@
 
 Node-RED nodes for integrating Matter smart home devices into your flows.
 
+[![GitHub](https://img.shields.io/badge/GitHub-stuartb55%2Fnodered--matter-blue?logo=github)](https://github.com/stuartb55/nodered-matter)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ## Overview
 
 This package provides Node-RED integration for Matter devices, allowing you to:
@@ -218,10 +221,11 @@ Restart Node-RED and the nodes will appear in the palette.
 ## Contributing
 
 Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+1. Fork the repository at https://github.com/stuartb55/nodered-matter
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
@@ -236,9 +240,10 @@ Built with:
 ## Support
 
 For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Check existing issues for solutions
-- Review the Matter specification documentation
+- 🐛 [Open an issue on GitHub](https://github.com/stuartb55/nodered-matter/issues)
+- 💬 [Check existing issues](https://github.com/stuartb55/nodered-matter/issues) for solutions
+- 📖 Review the Matter specification documentation
+- ⭐ Star the repo if you find it useful!
 
 ## Changelog
 

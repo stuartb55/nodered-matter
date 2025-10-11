@@ -19,8 +19,16 @@
       "matter-device": "nodes/matter-device.js"
     }
   },
-  "author": "",
+  "author": "Stuart",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stuartb55/nodered-matter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/stuartb55/nodered-matter/issues"
+  },
+  "homepage": "https://github.com/stuartb55/nodered-matter#readme",
   "dependencies": {
     "@project-chip/matter-node.js": "^0.9.0",
     "@project-chip/matter.js": "^0.9.0"
