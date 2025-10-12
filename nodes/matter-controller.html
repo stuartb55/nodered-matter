@@ -98,13 +98,15 @@
             function proceedWithCommissioning() {
                 const pairingCode = $('#node-config-pairing-code').val().trim();
                 const deviceName = $('#node-config-device-name').val().trim();
+                const multiAdmin = $('#node-config-multi-admin').is(':checked');
                 
                 if (!pairingCode) {
                     RED.notify("Please enter a pairing code", "error");
                     return;
                 }
                 
-                $('#node-config-commission-status').html('<span style="color: orange;">Commissioning device...</span>');
+                const statusText = multiAdmin ? 'Adding device to additional fabric...' : 'Commissioning device...';
+                $('#node-config-commission-status').html(`<span style="color: orange;">${statusText}</span>`);
                 
                 $.ajax({
                     url: `matter-controller/${node.id}/commission`,
@@ -112,7 +114,8 @@
                     contentType: 'application/json',
                     data: JSON.stringify({
                         pairingCode: pairingCode,
-                        deviceName: deviceName
+                        deviceName: deviceName,
+                        multiAdmin: multiAdmin
                     }),
                     success: function(result) {
                         $('#node-config-commission-status').html(
@@ -120,6 +123,7 @@
                         );
                         $('#node-config-pairing-code').val('');
                         $('#node-config-device-name').val('');
+                        $('#node-config-multi-admin').prop('checked', false);
                         
                         // Reload devices list
                         setTimeout(loadDevices, 1000);
@@ -213,6 +217,24 @@
     </div>
     
     <div class="form-row">
+        <label for="node-config-multi-admin" style="width: auto;">
+            <input type="checkbox" id="node-config-multi-admin" style="width: auto; margin: 0 5px 0 0;">
+            Multi-Admin Mode
+        </label>
+        <div style="margin-top: 5px; margin-left: 25px; font-size: 0.9em; color: #666;">
+            <strong>Check this if:</strong><br>
+            • Device is already paired with another controller (Aqara, Google, Apple, etc.)<br>
+            • You want to add Node-RED as an additional controller<br>
+            • You have a "sharing code" or "commissioner code" from existing controller<br>
+            <br>
+            <strong>Leave unchecked for:</strong><br>
+            • Fresh device (factory reset)<br>
+            • First-time pairing<br>
+            • Exclusive Node-RED control
+        </div>
+    </div>
+    
+    <div class="form-row">
         <label></label>
         <button type="button" id="node-config-commission-button" class="red-ui-button" onclick="return false;">
             <i class="fa fa-plus"></i> Commission Device
@@ -253,12 +275,28 @@
     </ol>
     
     <h3>Commissioning Devices</h3>
+    
+    <h4>Initial Commissioning (New/Factory Reset Devices)</h4>
     <ol>
+        <li>Factory reset your Matter device (if previously paired)</li>
         <li>Put your Matter device in pairing mode</li>
-        <li>Enter the pairing code (from QR code or device manual)</li>
+        <li>Enter the pairing code (from QR code or device label)</li>
         <li>Optionally give the device a friendly name</li>
+        <li><strong>Leave "Multi-Admin Mode" UNCHECKED</strong></li>
         <li>Click "Commission Device"</li>
         <li>Wait 30-60 seconds for commissioning to complete</li>
+    </ol>
+    
+    <h4>Multi-Admin Commissioning (Adding Node-RED to Existing Device)</h4>
+    <ol>
+        <li>Device must already be paired with another controller (Aqara, Google, Apple, etc.)</li>
+        <li>Open your primary controller app (e.g., Aqara Home)</li>
+        <li>Generate a "sharing code" or "commissioner code" for the device</li>
+        <li>Enter this sharing code in the pairing code field</li>
+        <li><strong>CHECK "Multi-Admin Mode"</strong></li>
+        <li>Click "Commission Device"</li>
+        <li>Node-RED will be added as an additional controller</li>
+        <li>Device remains operational with both controllers</li>
     </ol>
     
     <h3>Details</h3>

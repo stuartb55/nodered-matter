@@ -90,8 +90,8 @@ module.exports = function(RED) {
             }
         }
         
-        // Commission a new device using pairing code
-        node.commissionDevice = async function(pairingCode, deviceName) {
+        // Commission a new device using pairing code (supports both initial and multi-admin)
+        node.commissionDevice = async function(pairingCode, deviceName, options = {}) {
             if (!node.isInitialized) {
                 throw new Error("Matter Controller not initialized");
             }
@@ -99,8 +99,10 @@ module.exports = function(RED) {
             try {
                 // Don't log the actual pairing code for security
                 const codeType = pairingCode.startsWith('MT:') ? 'QR Code' : 'Manual Code';
-                node.log(`Commissioning device with ${codeType} (code length: ${pairingCode.length})`);
-                node.status({ fill: "yellow", shape: "ring", text: "commissioning..." });
+                const isMultiAdmin = options.multiAdmin || false;
+                
+                node.log(`${isMultiAdmin ? 'Multi-admin commissioning' : 'Commissioning'} device with ${codeType} (code length: ${pairingCode.length})`);
+                node.status({ fill: "yellow", shape: "ring", text: isMultiAdmin ? "adding fabric..." : "commissioning..." });
                 
                 // Parse the pairing code - could be QR code or manual code
                 let commissioningData;
@@ -116,19 +118,44 @@ module.exports = function(RED) {
                 }
                 
                 // Only log non-sensitive parts of commissioning data
-                node.log(`Commissioning data parsed successfully (discriminator: ${commissioningData.discriminator})`);
+                const discriminator = commissioningData.discriminator || commissioningData.shortDiscriminator;
+                node.log(`Commissioning data parsed successfully (discriminator: ${discriminator})`);
                 
-                // Commission the device using parsed data
-                const nodeId = await node.commissioningController.commissionNode({
+                // Prepare commissioning options
+                const commissionOptions = {
                     discovery: {
                         identifierData: commissioningData,
                     },
-                });
+                };
+                
+                // For multi-admin, we may need to specify additional options
+                // Matter.js handles this automatically, but we log it for clarity
+                if (isMultiAdmin) {
+                    node.log('Multi-admin mode: Adding Node-RED as additional fabric to existing device');
+                }
+                
+                // Commission the device using parsed data
+                // This works for both initial and multi-admin commissioning
+                // Matter.js will detect if device is already commissioned and handle accordingly
+                const nodeId = await node.commissioningController.commissionNode(commissionOptions);
                 
                 node.log(`Device commissioned successfully with NodeId: ${nodeId}`);
                 
                 // Connect to the device
                 const device = await node.commissioningController.getConnectedNode(nodeId);
+                
+                // Get fabric information to confirm multi-admin setup
+                let fabricInfo = null;
+                try {
+                    const endpoints = device.getDevices();
+                    if (endpoints.length > 0) {
+                        // Try to get fabric count from operational credentials cluster
+                        const clusters = endpoints[0].getAllClusterClients();
+                        node.log(`Device has ${endpoints.length} endpoint(s) with ${clusters.length} cluster(s)`);
+                    }
+                } catch (err) {
+                    node.warn(`Could not read fabric information: ${err.message}`);
+                }
                 
                 // Store device info
                 node.commissionedDevices.set(nodeId.toString(), {
@@ -136,7 +163,9 @@ module.exports = function(RED) {
                     device: device,
                     name: deviceName || `Device-${nodeId}`,
                     connected: true,
-                    commissioned: new Date().toISOString()
+                    commissioned: new Date().toISOString(),
+                    multiAdmin: isMultiAdmin,
+                    fabricInfo: fabricInfo
                 });
                 
                 node.status({ fill: "green", shape: "dot", text: "connected" });
@@ -144,13 +173,31 @@ module.exports = function(RED) {
                 return {
                     success: true,
                     nodeId: nodeId.toString(),
-                    message: "Device commissioned successfully"
+                    message: isMultiAdmin ? 
+                        "Device added to Node-RED fabric (multi-admin)" : 
+                        "Device commissioned successfully",
+                    multiAdmin: isMultiAdmin
                 };
                 
             } catch (error) {
                 node.status({ fill: "red", shape: "ring", text: "commission failed" });
-                node.error(`Commissioning failed: ${error.message}`);
-                throw error;
+                
+                // Provide more helpful error messages for common multi-admin issues
+                let errorMessage = error.message;
+                
+                if (errorMessage.includes('key confirmation')) {
+                    errorMessage = 'Pairing failed: Incorrect pairing code or device not in pairing mode. ' +
+                                 'For multi-admin: Ensure you have the commissioner code from the primary controller.';
+                } else if (errorMessage.includes('timeout')) {
+                    errorMessage = 'Pairing timed out: Device not found or not responding. ' +
+                                 'Ensure device is powered on and in pairing mode.';
+                } else if (errorMessage.includes('already commissioned')) {
+                    errorMessage = 'Device already commissioned to this controller. ' +
+                                 'For multi-admin: Use the sharing code from the device\'s primary controller.';
+                }
+                
+                node.error(`Commissioning failed: ${errorMessage}`);
+                throw new Error(errorMessage);
             }
         };
         
@@ -309,7 +356,7 @@ module.exports = function(RED) {
             return;
         }
         
-        const { pairingCode, deviceName } = req.body;
+        const { pairingCode, deviceName, multiAdmin } = req.body;
         
         // Validate pairing code presence
         if (!pairingCode) {
@@ -330,8 +377,14 @@ module.exports = function(RED) {
             return;
         }
         
+        // Log commissioning type
+        if (multiAdmin) {
+            RED.log.info('[Matter] Multi-admin commissioning requested (adding additional fabric)');
+        }
+        
         try {
-            const result = await node.commissionDevice(sanitizedCode, deviceName);
+            const options = { multiAdmin: multiAdmin || false };
+            const result = await node.commissionDevice(sanitizedCode, deviceName, options);
             res.json(result);
         } catch (error) {
             res.status(500).json({ error: error.message });

@@ -130,14 +130,21 @@ class MatterTestController {
         }
     }
 
-    async commissionDevice(pairingCode, deviceName) {
+    async commissionDevice(pairingCode, deviceName, options = {}) {
         if (!this.isInitialized) {
             throw new Error("Matter Controller not initialized");
         }
 
         try {
             const codeType = pairingCode.startsWith('MT:') ? 'QR Code' : 'Manual Code';
-            logInfo(`Commissioning device with ${codeType}...`);
+            const isMultiAdmin = options.multiAdmin || false;
+            
+            if (isMultiAdmin) {
+                logInfo(`Multi-admin commissioning with ${codeType}...`);
+                logInfo(`Adding Node-RED as additional fabric to existing device`);
+            } else {
+                logInfo(`Commissioning device with ${codeType}...`);
+            }
 
             // Parse the pairing code
             let commissioningData;
@@ -173,13 +180,30 @@ class MatterTestController {
                 device: device,
                 name: deviceName || `Device-${nodeId}`,
                 connected: true,
-                commissioned: new Date().toISOString()
+                commissioned: new Date().toISOString(),
+                multiAdmin: isMultiAdmin
             });
+
+            if (isMultiAdmin) {
+                logSuccess(`Device added to Node-RED fabric (multi-admin mode)`);
+                logInfo(`Device remains operational with other controllers`);
+            }
 
             return nodeId.toString();
 
         } catch (error) {
-            logError(`Commissioning failed: ${error.message}`);
+            let errorMessage = error.message;
+            
+            // Provide helpful error messages for common multi-admin issues
+            if (errorMessage.includes('key confirmation')) {
+                logError('Pairing failed: Incorrect pairing code or device not in pairing mode');
+                if (isMultiAdmin) {
+                    logWarning('For multi-admin: Ensure you have the commissioner/sharing code from the primary controller');
+                }
+            } else if (errorMessage.includes('timeout')) {
+                logError('Pairing timed out: Device not found or not responding');
+            }
+            
             throw error;
         }
     }
@@ -358,7 +382,26 @@ async function commissionNewDevice(controller) {
     log('─'.repeat(50));
     console.log();
     
-    const pairingCode = await question('Enter pairing code (QR code or 11-digit manual code): ');
+    log('Commissioning Type:', colors.cyan);
+    console.log('  1. Initial commissioning (fresh/factory reset device)');
+    console.log('  2. Multi-admin (add to existing device from another controller)');
+    console.log();
+    
+    const commType = await question('Choose type (1 or 2): ');
+    const isMultiAdmin = commType.trim() === '2';
+    
+    if (isMultiAdmin) {
+        console.log();
+        logInfo('Multi-Admin Mode');
+        log('─'.repeat(50));
+        console.log('For multi-admin commissioning:');
+        console.log('1. Device must already be paired with another controller (Aqara, Google, etc.)');
+        console.log('2. Generate a "sharing code" or "commissioner code" from your primary controller app');
+        console.log('3. Enter that code below (NOT the original device pairing code)');
+        console.log();
+    }
+    
+    const pairingCode = await question('Enter pairing code: ');
     if (!pairingCode.trim()) {
         logWarning('Pairing code required');
         return;
@@ -367,8 +410,15 @@ async function commissionNewDevice(controller) {
     const deviceName = await question('Enter device name (optional): ');
 
     try {
-        const nodeId = await controller.commissionDevice(pairingCode.trim(), deviceName.trim());
+        const options = { multiAdmin: isMultiAdmin };
+        const nodeId = await controller.commissionDevice(pairingCode.trim(), deviceName.trim(), options);
         logSuccess(`Device commissioned with NodeId: ${nodeId}`);
+        
+        if (isMultiAdmin) {
+            console.log();
+            logInfo('Device added to Node-RED fabric!');
+            logInfo('The device will remain operational with your other controllers.');
+        }
     } catch (error) {
         logError(`Failed to commission device: ${error.message}`);
     }

@@ -2,13 +2,15 @@
 /**
  * Commission a Matter Device - Standalone Script
  * Non-interactive commissioning for automation/testing
+ * Supports both initial and multi-admin commissioning
  * 
  * Usage:
- *   node test-matter-commission.js <pairing-code> [device-name]
+ *   node test-matter-commission.js <pairing-code> [device-name] [--multi-admin]
  * 
  * Examples:
  *   node test-matter-commission.js 34970112332 "Front Door"
  *   node test-matter-commission.js MT:Y.K90IF0QA04ABCD0000
+ *   node test-matter-commission.js 16425630388 "Aqara Door" --multi-admin
  */
 
 const { MatterTestController } = require('./test-matter-standalone');
@@ -28,16 +30,30 @@ async function main() {
     const args = process.argv.slice(2);
 
     if (args.length === 0) {
-        console.log('Usage: node test-matter-commission.js <pairing-code> [device-name]');
+        console.log('Usage: node test-matter-commission.js <pairing-code> [device-name] [--multi-admin]');
         console.log();
         console.log('Examples:');
-        console.log('  node test-matter-commission.js 34970112332 "Front Door"');
-        console.log('  node test-matter-commission.js MT:Y.K90IF0QA04ABCD0000');
+        console.log('  Initial commissioning:');
+        console.log('    node test-matter-commission.js 34970112332 "Front Door"');
+        console.log('    node test-matter-commission.js MT:Y.K90IF0QA04ABCD0000');
+        console.log();
+        console.log('  Multi-admin commissioning (add to existing device):');
+        console.log('    node test-matter-commission.js 16425630388 "Aqara Door" --multi-admin');
         process.exit(1);
     }
 
     const pairingCode = args[0];
-    const deviceName = args[1] || '';
+    let deviceName = '';
+    let multiAdmin = false;
+    
+    // Parse arguments
+    for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--multi-admin') {
+            multiAdmin = true;
+        } else if (!deviceName) {
+            deviceName = args[i];
+        }
+    }
 
     const controller = new MatterTestController();
 
@@ -46,11 +62,17 @@ async function main() {
         await controller.initialize();
         console.log();
 
-        log('Starting commissioning process...', colors.blue);
+        if (multiAdmin) {
+            log('Multi-Admin Commissioning Mode', colors.blue);
+            log('Adding Node-RED as additional fabric to existing device', colors.blue);
+        } else {
+            log('Initial Commissioning Mode', colors.blue);
+        }
         log('This may take 30-60 seconds...', colors.blue);
         console.log();
 
-        const nodeId = await controller.commissionDevice(pairingCode, deviceName);
+        const options = { multiAdmin: multiAdmin };
+        const nodeId = await controller.commissionDevice(pairingCode, deviceName, options);
         
         console.log();
         log('✓ SUCCESS!', colors.green);
