@@ -1,0 +1,15 @@
+node-red:
+    container_name: node-red
+    restart: unless-stopped
+    image: nodered/node-red
+    environment:
+      - TZ=Europe/London
+    volumes:
+      - /Users/stuart/node-red:/data
+    ports:
+      - "1880:1880"
+      - "1881:1881" # Prometheus metric exporter
+      - "5353:5353/udp"  # mDNS for Matter device discovery
+      - "5540:5540/udp"  # Matter
+    cap_add:
+      - NET_ADMIN
