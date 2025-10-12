@@ -19,13 +19,21 @@ module.exports = function(RED) {
         
         let pollTimer = null;
         let isSubscribed = false;
+        let subscriptionHandle = null;
+        let retryCount = 0;
+        const MAX_RETRIES = 30; // 30 seconds timeout
         
         // Wait for controller to initialize
         function waitForController() {
             if (node.controller.isInitialized) {
+                retryCount = 0; // Reset on success
                 initializeDevice();
-            } else {
+            } else if (retryCount < MAX_RETRIES) {
+                retryCount++;
                 setTimeout(waitForController, 1000);
+            } else {
+                node.status({ fill: "red", shape: "ring", text: "controller timeout" });
+                node.error("Controller failed to initialize within 30 seconds. Check controller configuration and deploy status.");
             }
         }
         
@@ -66,7 +74,8 @@ module.exports = function(RED) {
         
         async function subscribeToDevice() {
             try {
-                await node.controller.subscribeToDevice(
+                // Store the subscription handle for cleanup
+                subscriptionHandle = await node.controller.subscribeToDevice(
                     node.deviceId,
                     node.deviceType,
                     (state) => {
@@ -92,9 +101,13 @@ module.exports = function(RED) {
                 
             } catch (error) {
                 node.warn(`Failed to subscribe to device: ${error.message}`);
+                subscriptionHandle = null;
                 // Continue even if subscription fails - polling can still work
             }
         }
+        
+        let errorCount = 0;
+        const MAX_CONSECUTIVE_ERRORS = 5;
         
         async function pollDevice() {
             try {
@@ -102,6 +115,9 @@ module.exports = function(RED) {
                     node.deviceId,
                     node.deviceType
                 );
+                
+                // Reset error count on successful read
+                errorCount = 0;
                 
                 // Update status
                 updateStatus(state);
@@ -121,8 +137,23 @@ module.exports = function(RED) {
                 }
                 
             } catch (error) {
-                node.error(`Failed to read device state: ${error.message}`);
-                node.status({ fill: "red", shape: "ring", text: "read error" });
+                errorCount++;
+                
+                if (errorCount >= MAX_CONSECUTIVE_ERRORS) {
+                    node.error(`Device ${node.deviceId} appears offline after ${errorCount} failed attempts: ${error.message}`);
+                    node.status({ fill: "red", shape: "ring", text: "device offline" });
+                    
+                    // Stop aggressive polling if device is offline
+                    if (pollTimer && node.pollInterval < 60) {
+                        clearInterval(pollTimer);
+                        // Switch to slower polling (every 60 seconds)
+                        pollTimer = setInterval(pollDevice, 60000);
+                        node.warn("Switched to reduced polling rate due to errors");
+                    }
+                } else {
+                    node.warn(`Failed to read device state (attempt ${errorCount}/${MAX_CONSECUTIVE_ERRORS}): ${error.message}`);
+                    node.status({ fill: "yellow", shape: "ring", text: `retry ${errorCount}` });
+                }
             }
         }
         
@@ -148,11 +179,37 @@ module.exports = function(RED) {
         });
         
         // Cleanup on close
-        node.on('close', function(done) {
-            if (pollTimer) {
-                clearInterval(pollTimer);
+        node.on('close', async function(done) {
+            const closeTimeout = setTimeout(() => {
+                node.warn("Device node close operation timed out");
+                done();
+            }, 3000);
+            
+            try {
+                // Clear polling timer
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+                
+                // Unsubscribe from device updates
+                if (subscriptionHandle && node.controller) {
+                    try {
+                        if (typeof subscriptionHandle.unsubscribe === 'function') {
+                            await subscriptionHandle.unsubscribe();
+                        }
+                    } catch (err) {
+                        node.warn(`Failed to unsubscribe: ${err.message}`);
+                    }
+                }
+                
+                clearTimeout(closeTimeout);
+                done();
+            } catch (error) {
+                clearTimeout(closeTimeout);
+                node.error(`Error during close: ${error.message}`);
+                done();
             }
-            done();
         });
         
         // Start initialization

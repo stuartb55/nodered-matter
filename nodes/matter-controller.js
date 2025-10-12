@@ -6,6 +6,7 @@ module.exports = function(RED) {
     const { BooleanStateCluster, ContactSensorTypeEnum } = require("@project-chip/matter.js/cluster");
     const path = require("path");
     const os = require("os");
+    const fs = require("fs");
 
     function MatterControllerNode(config) {
         RED.nodes.createNode(this, config);
@@ -19,12 +20,24 @@ module.exports = function(RED) {
         // Storage path in Node-RED user directory
         const storageDir = path.join(RED.settings.userDir || os.homedir(), ".node-red-matter");
         
-        console.log(`[Matter] Creating controller node with ID: ${node.id}, Name: ${node.name}`);
+        node.log(`Creating controller node with ID: ${node.id}, Name: ${node.name}`);
         node.log(`Initializing Matter Controller with storage: ${storageDir}`);
         
         // Initialize Matter controller
         async function initMatterController() {
             try {
+                // Ensure storage directory exists
+                try {
+                    if (!fs.existsSync(storageDir)) {
+                        fs.mkdirSync(storageDir, { recursive: true, mode: 0o755 });
+                        node.log(`Created storage directory: ${storageDir}`);
+                    }
+                } catch (fsError) {
+                    node.error(`Failed to create storage directory: ${fsError.message}`);
+                    node.status({ fill: "red", shape: "ring", text: "storage error" });
+                    return;
+                }
+                
                 // Create storage backend
                 const storageManager = new StorageManager(new StorageBackendDisk(storageDir));
                 await storageManager.initialize();
@@ -84,7 +97,9 @@ module.exports = function(RED) {
             }
             
             try {
-                node.log(`Commissioning device with code: ${pairingCode}`);
+                // Don't log the actual pairing code for security
+                const codeType = pairingCode.startsWith('MT:') ? 'QR Code' : 'Manual Code';
+                node.log(`Commissioning device with ${codeType} (code length: ${pairingCode.length})`);
                 node.status({ fill: "yellow", shape: "ring", text: "commissioning..." });
                 
                 // Parse the pairing code - could be QR code or manual code
@@ -100,7 +115,8 @@ module.exports = function(RED) {
                     commissioningData = ManualPairingCodeCodec.decode(pairingCode);
                 }
                 
-                node.log(`Parsed commissioning data:`, commissioningData);
+                // Only log non-sensitive parts of commissioning data
+                node.log(`Commissioning data parsed successfully (discriminator: ${commissioningData.discriminator})`);
                 
                 // Commission the device using parsed data
                 const nodeId = await node.commissioningController.commissionNode({
@@ -132,8 +148,9 @@ module.exports = function(RED) {
                 };
                 
             } catch (error) {
-                node.status({ fill: "green", shape: "dot", text: "connected" });
-                throw new Error(`Commissioning failed: ${error.message}`);
+                node.status({ fill: "red", shape: "ring", text: "commission failed" });
+                node.error(`Commissioning failed: ${error.message}`);
+                throw error;
             }
         };
         
@@ -218,7 +235,7 @@ module.exports = function(RED) {
                         
                         if (booleanStateCluster) {
                             // Subscribe to state changes
-                            await booleanStateCluster.subscribeStateValueAttribute(
+                            const unsubscribe = await booleanStateCluster.subscribeStateValueAttribute(
                                 (value) => {
                                     const state = {
                                         nodeId: nodeId,
@@ -236,7 +253,20 @@ module.exports = function(RED) {
                             );
                             
                             node.log(`Subscribed to device ${nodeId} state changes`);
-                            return true;
+                            
+                            // Return an object with unsubscribe method
+                            return {
+                                unsubscribe: async () => {
+                                    try {
+                                        if (typeof unsubscribe === 'function') {
+                                            await unsubscribe();
+                                        }
+                                        node.log(`Unsubscribed from device ${nodeId}`);
+                                    } catch (err) {
+                                        node.warn(`Error unsubscribing from device ${nodeId}: ${err.message}`);
+                                    }
+                                }
+                            };
                         }
                     }
                 }
@@ -270,23 +300,38 @@ module.exports = function(RED) {
     
     // HTTP endpoints for device management
     RED.httpAdmin.post("/matter-controller/:id/commission", RED.auth.needsPermission('matter-controller.write'), async function(req, res) {
-        console.log("[Matter] Commission request for node ID:", req.params.id);
+        RED.log.info(`[Matter] Commission request for node ID: ${req.params.id}`);
         const node = RED.nodes.getNode(req.params.id);
-        console.log("[Matter] Found node:", node ? "YES" : "NO");
+        RED.log.info(`[Matter] Found node: ${node ? "YES" : "NO"}`);
         if (!node) {
-            console.log("[Matter] ERROR: Controller node not found for ID:", req.params.id);
+            RED.log.error(`[Matter] ERROR: Controller node not found for ID: ${req.params.id}`);
             res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
             return;
         }
         
         const { pairingCode, deviceName } = req.body;
+        
+        // Validate pairing code presence
         if (!pairingCode) {
             res.status(400).json({ error: "Pairing code is required" });
             return;
         }
         
+        // Validate pairing code format
+        const sanitizedCode = pairingCode.trim();
+        const isQRCode = sanitizedCode.startsWith('MT:');
+        const isManualCode = /^\d{8,11}(-\d{4,8})?$/.test(sanitizedCode.replace(/-/g, ''));
+        
+        if (!isQRCode && !isManualCode) {
+            res.status(400).json({ 
+                error: "Invalid pairing code format",
+                details: "Expected QR code starting with 'MT:' or 11-digit manual pairing code"
+            });
+            return;
+        }
+        
         try {
-            const result = await node.commissionDevice(pairingCode, deviceName);
+            const result = await node.commissionDevice(sanitizedCode, deviceName);
             res.json(result);
         } catch (error) {
             res.status(500).json({ error: error.message });
@@ -294,11 +339,11 @@ module.exports = function(RED) {
     });
     
     RED.httpAdmin.get("/matter-controller/:id/devices", RED.auth.needsPermission('matter-controller.read'), function(req, res) {
-        console.log("[Matter] Devices request for node ID:", req.params.id);
+        RED.log.info(`[Matter] Devices request for node ID: ${req.params.id}`);
         const node = RED.nodes.getNode(req.params.id);
-        console.log("[Matter] Found node:", node ? "YES - initialized: " + node.isInitialized : "NO");
+        RED.log.info(`[Matter] Found node: ${node ? "YES - initialized: " + node.isInitialized : "NO"}`);
         if (!node) {
-            console.log("[Matter] ERROR: Controller node not found for ID:", req.params.id);
+            RED.log.error(`[Matter] ERROR: Controller node not found for ID: ${req.params.id}`);
             res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
             return;
         }
