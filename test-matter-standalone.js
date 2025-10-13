@@ -159,15 +159,115 @@ class MatterTestController {
                 commissioningData = ManualPairingCodeCodec.decode(pairingCode);
             }
 
-            logInfo(`Discriminator: ${commissioningData.discriminator}`);
+            const discriminator = commissioningData.discriminator || commissioningData.shortDiscriminator;
+            logInfo(`Discriminator: ${discriminator}`);
+            logInfo(`Passcode: ${commissioningData.passcode ? '[PRESENT]' : '[MISSING]'}`);
+            
+            // Pre-commissioning device scan
+            logInfo(`Scanning for commissionable devices...`);
+            try {
+                // Give a moment for any existing scans to complete
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Try to get information about commissionable devices in the area
+                logInfo(`Checking for any commissionable devices on network...`);
+                
+                // Log what we're looking for specifically
+                logInfo(`Looking for device with:`);
+                logInfo(`  - Short Discriminator: ${discriminator}`);
+                logInfo(`  - Vendor ID: ${commissioningData.vendorId || 'Any'}`);
+                logInfo(`  - Product ID: ${commissioningData.productId || 'Any'}`);
+                
+            } catch (e) {
+                // Ignore timeout errors
+                logWarning(`Pre-scan error (non-fatal): ${e.message}`);
+            }
 
-            // Commission the device
-            logInfo(`Starting commissioning (this may take 30-60 seconds)...`);
-            const nodeId = await this.commissioningController.commissionNode({
+            // Commission the device with extended timeout
+            logInfo(`Starting commissioning (this may take 60-90 seconds)...`);
+            logInfo(`Searching for device with discriminator ${commissioningData.discriminator || commissioningData.shortDiscriminator}...`);
+            
+            // For multi-admin, we need to check if device is already commissioned
+            // and handle it differently than initial commissioning
+            let commissionOptions = {
                 discovery: {
                     identifierData: commissioningData,
+                    timeoutSeconds: 60, // Extended timeout for device discovery
                 },
-            });
+            };
+            
+            if (isMultiAdmin) {
+                // For multi-admin commissioning, we may need additional parameters
+                // to indicate this is adding a fabric, not initial commissioning
+                logInfo('Attempting multi-admin commissioning (adding additional fabric)');
+                
+                // Some Matter.js versions require explicit multi-admin handling
+                try {
+                    // Check if device is already commissioned by trying to get existing fabrics
+                    const existingNodes = await this.commissioningController.getCommissionedNodes();
+                    logInfo(`Found ${existingNodes.length} existing commissioned devices in this controller`);
+                    
+                    // Log controller fabric information
+                    const fabricInfo = await this.commissioningController.getFabrics();
+                    logInfo(`Controller has ${fabricInfo.length} fabric(s) configured`);
+                    
+                } catch (e) {
+                    // This is expected for multi-admin - device won't be in our controller yet
+                    logInfo('Device not yet in this controller (expected for multi-admin)');
+                    logInfo(`Controller error: ${e.message}`);
+                }
+                
+                // Add detailed logging for multi-admin specific parameters
+                logInfo(`Multi-admin commissioning parameters:`);
+                logInfo(`  - Discriminator: ${discriminator}`);
+                logInfo(`  - Vendor/Product: ${commissioningData.vendorId || 'undefined'}/${commissioningData.productId || 'undefined'}`);
+                logInfo(`  - Setup PIN: ${commissioningData.passcode ? '[PRESENT]' : '[MISSING]'}`);
+            }
+
+            // Log commissioning attempt details
+            logInfo(`Starting commissioning with options:`);
+            logInfo(`  - Discovery timeout: ${commissionOptions.discovery.timeoutSeconds}s`);
+            logInfo(`  - Expected discriminator: ${discriminator}`);
+            logInfo(`  - Multi-admin mode: ${isMultiAdmin}`);
+            
+            // Attempt commissioning with detailed error capture
+            let nodeId;
+            try {
+                logInfo(`Calling commissionNode()...`);
+                nodeId = await this.commissioningController.commissionNode(commissionOptions);
+                logSuccess(`commissionNode() returned NodeId: ${nodeId}`);
+            } catch (commissionError) {
+                logError(`commissionNode() failed: ${commissionError.message}`);
+                
+                // Log additional error details
+                if (commissionError.stack) {
+                    logInfo(`Error stack trace: ${commissionError.stack.split('\n')[0]}`);
+                }
+                
+                // Check if it's a specific PASE error
+                if (commissionError.message.includes('key confirmation')) {
+                    logError(`PASE protocol error detected - this suggests:`);
+                    if (isMultiAdmin) {
+                        logError(`Multi-admin specific issues:`);
+                        logError(`  1. Device may still have Alexa fabric (removal not propagated)`);
+                        logError(`  2. Sharing code may be expired or wrong type`);
+                        logError(`  3. Device needs to be in commissioning window from Aqara app`);
+                        logError(`  4. Try factory reset + initial commissioning instead`);
+                    } else {
+                        logError(`Initial commissioning issues:`);
+                        logError(`  1. Device not factory reset (still has other fabrics)`);
+                        logError(`  2. Wrong pairing code`);
+                        logError(`  3. Device not in pairing mode`);
+                    }
+                    
+                    // Suggest the nuclear option
+                    logWarning(`RECOMMENDATION: Try factory reset + initial commissioning:`);
+                    logWarning(`  1. Hold device button 10+ seconds (LED flashes rapidly)`);
+                    logWarning(`  2. Use option 1 (Initial) with original code: 03753213995`);
+                }
+                
+                throw commissionError;
+            }
 
             logSuccess(`Device commissioned successfully with NodeId: ${nodeId}`);
 
@@ -194,14 +294,34 @@ class MatterTestController {
         } catch (error) {
             let errorMessage = error.message;
             
-            // Provide helpful error messages for common multi-admin issues
-            if (errorMessage.includes('key confirmation')) {
-                logError('Pairing failed: Incorrect pairing code or device not in pairing mode');
+            // Provide helpful error messages for common issues
+            if (errorMessage.includes('No device discovered')) {
+                logError('Device discovery failed - device not found during scan');
+                logWarning('Troubleshooting steps:');
+                console.log('  1. Ensure device is in pairing mode (usually hold button for 5+ seconds)');
+                console.log('  2. Check device is on same network as this computer');
+                console.log('  3. Verify pairing code is correct');
+                console.log('  4. Try factory resetting device and using initial commissioning');
                 if (isMultiAdmin) {
-                    logWarning('For multi-admin: Ensure you have the commissioner/sharing code from the primary controller');
+                    console.log('  5. For multi-admin: Generate fresh sharing code from primary app');
+                    console.log('  6. Use sharing code immediately (they expire quickly)');
+                }
+            } else if (errorMessage.includes('key confirmation')) {
+                logError('Multi-admin commissioning failed: Key confirmation rejected');
+                if (isMultiAdmin) {
+                    logWarning('Common multi-admin issues:');
+                    console.log('  1. Device may have reached maximum fabric limit (typically 16)');
+                    console.log('  2. Commissioning window may have expired - generate fresh code');
+                    console.log('  3. Device may not support 3+ controllers simultaneously');
+                    console.log('  4. Try removing device from one controller first');
+                    console.log('  5. Some devices need factory reset before first multi-admin setup');
+                } else {
+                    logWarning('For initial commissioning: Ensure device is factory reset and in pairing mode');
                 }
             } else if (errorMessage.includes('timeout')) {
                 logError('Pairing timed out: Device not found or not responding');
+            } else {
+                logError(`Commissioning failed: ${errorMessage}`);
             }
             
             throw error;

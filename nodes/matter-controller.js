@@ -71,18 +71,30 @@ module.exports = function(RED) {
             try {
                 const nodes = await node.commissioningController.getCommissionedNodes();
                 node.log(`Found ${nodes.length} commissioned device(s)`);
-                
+
                 for (const nodeId of nodes) {
                     try {
                         const device = await node.commissioningController.getConnectedNode(nodeId);
                         node.commissionedDevices.set(nodeId.toString(), {
                             nodeId: nodeId,
                             device: device,
-                            connected: true
+                            name: `Device-${nodeId}`, // Default name since we don't store it
+                            connected: true,
+                            commissioned: new Date().toISOString(),
+                            restored: true,
+                            vendorId: null, // We don't have this info for restored devices
+                            productId: null
                         });
                         node.log(`Restored device: ${nodeId}`);
                     } catch (err) {
                         node.warn(`Could not connect to device ${nodeId}: ${err.message}`);
+                        // Remove from storage if device is no longer available
+                        try {
+                            await node.commissioningController.removeNode(nodeId);
+                            node.log(`Removed unavailable device ${nodeId} from storage`);
+                        } catch (removeErr) {
+                            node.warn(`Could not remove device ${nodeId}: ${removeErr.message}`);
+                        }
                     }
                 }
             } catch (error) {
@@ -120,6 +132,13 @@ module.exports = function(RED) {
                 // Only log non-sensitive parts of commissioning data
                 const discriminator = commissioningData.discriminator || commissioningData.shortDiscriminator;
                 node.log(`Commissioning data parsed successfully (discriminator: ${discriminator})`);
+
+                // Thread device detection and analysis
+                const vendorId = commissioningData.vendorId;
+                if (vendorId === 4447) { // Aqara vendor ID
+                    node.log(`Thread device detected - Aqara vendor ID: ${vendorId}`);
+                    node.log(`For Thread devices, ensure Aqara M100 hub is available and Thread network is operational`);
+                }
                 
                 // Prepare commissioning options
                 const commissionOptions = {
@@ -165,7 +184,9 @@ module.exports = function(RED) {
                     connected: true,
                     commissioned: new Date().toISOString(),
                     multiAdmin: isMultiAdmin,
-                    fabricInfo: fabricInfo
+                    fabricInfo: fabricInfo,
+                    vendorId: commissioningData.vendorId,
+                    productId: commissioningData.productId
                 });
                 
                 node.status({ fill: "green", shape: "dot", text: "connected" });
@@ -181,21 +202,31 @@ module.exports = function(RED) {
                 
             } catch (error) {
                 node.status({ fill: "red", shape: "ring", text: "commission failed" });
-                
-                // Provide more helpful error messages for common multi-admin issues
+
+                // Enhanced error handling for common issues
                 let errorMessage = error.message;
-                
-                if (errorMessage.includes('key confirmation')) {
-                    errorMessage = 'Pairing failed: Incorrect pairing code or device not in pairing mode. ' +
-                                 'For multi-admin: Ensure you have the commissioner code from the primary controller.';
+
+                if (errorMessage.includes('No device discovered')) {
+                    errorMessage = 'Device discovery failed - device not found during scan. ' +
+                                 'Ensure device is in pairing mode (hold button 5+ seconds) and on same network.';
+                } else if (errorMessage.includes('key confirmation')) {
+                    if (isMultiAdmin) {
+                        errorMessage = 'Multi-admin commissioning failed: Key confirmation rejected. ' +
+                                     'Common issues: 1) Device fabric limit reached (try removing from other controllers), ' +
+                                     '2) Sharing code expired (generate fresh code), ' +
+                                     '3) Device not in commissioning window from primary controller.';
+                    } else {
+                        errorMessage = 'Initial commissioning failed: Incorrect pairing code or device not in pairing mode. ' +
+                                     'Ensure device is factory reset and in pairing mode.';
+                    }
                 } else if (errorMessage.includes('timeout')) {
-                    errorMessage = 'Pairing timed out: Device not found or not responding. ' +
-                                 'Ensure device is powered on and in pairing mode.';
+                    errorMessage = 'Commissioning timed out: Device not responding. ' +
+                                 'Check network connectivity and ensure device is powered on.';
                 } else if (errorMessage.includes('already commissioned')) {
                     errorMessage = 'Device already commissioned to this controller. ' +
-                                 'For multi-admin: Use the sharing code from the device\'s primary controller.';
+                                 'For multi-admin: Use sharing code from primary controller.';
                 }
-                
+
                 node.error(`Commissioning failed: ${errorMessage}`);
                 throw new Error(errorMessage);
             }
@@ -218,6 +249,35 @@ module.exports = function(RED) {
                 });
             });
             return devices;
+        };
+
+        // Check if controller is dealing with Thread devices
+        node.isThreadEnvironment = function() {
+            // Check if any commissioned devices are Aqara (Thread devices)
+            for (const [nodeId, deviceInfo] of node.commissionedDevices) {
+                // Aqara devices use Thread networking
+                if (deviceInfo.vendorId === 4447) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Get Thread-specific guidance for commissioned devices
+        node.getThreadGuidance = function() {
+            if (node.isThreadEnvironment()) {
+                return {
+                    threadDetected: true,
+                    message: "Thread devices detected. Ensure Aqara M100 hub is operational and Thread network is active.",
+                    recommendations: [
+                        "Check Aqara app for M100 hub status",
+                        "Ensure Thread network is operational",
+                        "Verify device is in range of Thread Border Router",
+                        "Consider factory reset if multi-admin issues persist"
+                    ]
+                };
+            }
+            return { threadDetected: false };
         };
         
         // Read device state
