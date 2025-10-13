@@ -5,6 +5,7 @@ npm-debug.log*
 .env
 .node-red-matter/
 .matter-test-storage/
+.matter-debug-storage/
 package-lock.json
 .vscode/
 .idea/
