@@ -135,10 +135,10 @@ class MatterTestController {
             throw new Error("Matter Controller not initialized");
         }
 
+        const codeType = pairingCode.startsWith('MT:') ? 'QR Code' : 'Manual Code';
+        const isMultiAdmin = options.multiAdmin || false;
+
         try {
-            const codeType = pairingCode.startsWith('MT:') ? 'QR Code' : 'Manual Code';
-            const isMultiAdmin = options.multiAdmin || false;
-            
             if (isMultiAdmin) {
                 logInfo(`Multi-admin commissioning with ${codeType}...`);
                 logInfo(`Adding Node-RED as additional fabric to existing device`);
