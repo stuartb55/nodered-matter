@@ -1,442 +1,357 @@
 # Troubleshooting Guide
 
-Common issues and solutions for node-red-contrib-matter.
-
-## Installation Issues
-
-### Plugin doesn't appear in Node-RED palette
-
-**Symptoms**: After installation, "Matter" category or nodes don't show up.
-
-**Solutions**:
-1. Restart Node-RED completely
-2. Check installation:
-   ```bash
-   cd ~/.node-red
-   npm list | grep matter
-   ```
-3. Check Node-RED logs for errors
-4. Ensure Node.js version is 18+: `node --version`
-5. Reinstall dependencies:
-   ```bash
-   cd ~/.node-red/node_modules/node-red-contrib-matter
-   npm install
-   ```
-
-### Docker: Plugin doesn't appear
-
-**Solutions**:
-1. Verify installation in container:
-   ```bash
-   docker exec nodered npm list | grep matter
-   ```
-2. Check container logs:
-   ```bash
-   docker logs nodered
-   ```
-3. Ensure `/data` volume is persistent
-4. Reinstall inside container:
-   ```bash
-   docker exec nodered sh -c "cd /data && npm install ./node-red-contrib-matter"
-   docker restart nodered
-   ```
-
-## Configuration Issues
-
-### ❌ "Controller node not found"
-
-**Symptoms**: When trying to commission a device, you see "✗ Controller node not found"
-
-**Cause**: The Matter Controller configuration hasn't been saved/deployed yet.
-
-**Solution**:
-1. In the Matter Controller config dialog, click **"Add"** (not Cancel)
-2. If prompted, click **"Deploy"** in Node-RED
-3. **Reopen** the controller configuration (double-click the node or edit via config nodes)
-4. Now you can commission devices
-
-**Important**: You MUST save the controller first before commissioning devices!
-
-### Controller shows "no controller" status
-
-**Symptoms**: Matter device node shows red status "no controller"
-
-**Solutions**:
-1. Ensure you've created a Matter Controller configuration
-2. In the matter device node, select the controller from dropdown
-3. Deploy the flow
-4. Wait 10-15 seconds for controller to initialize
+This guide helps you diagnose and resolve common issues with the Node-RED Matter plugin.
 
 ## Commissioning Issues
 
-### Device won't commission
+### Device Discovery Failed
 
-**Symptoms**: Commissioning fails or times out
+**Symptoms:**
+- Error: "Device discovery failed - device not found during scan"
+- Commissioning times out during discovery phase
+- Device not appearing in scan results
 
-**Solutions**:
+**Solutions:**
 
-1. **Verify device is in pairing mode**:
-   - Usually requires holding a button for 3-5 seconds
-   - LED should blink indicating pairing mode
-   - Check device manual for specific instructions
+1. **Check Device Pairing Mode**
+   - Hold device button for 5+ seconds until LED flashes
+   - Some devices require 10+ seconds for factory reset
+   - Verify device is in commissioning window (usually 3-15 minutes)
 
-2. **Check pairing code**:
-   - Verify you entered the code correctly
-   - Code is usually 11 digits
-   - Try scanning QR code with phone to verify code
+2. **Network Connectivity**
+   - Ensure device and Node-RED are on same network
+   - Check firewall settings (Matter uses ports 5540 UDP)
+   - Verify mDNS is working: `ping device-name.local`
 
-3. **Factory reset the device**:
-   - Device may have been commissioned to another controller
-   - Factory reset usually requires holding button 10+ seconds
-   - Try commissioning again with fresh reset
+3. **Thread Device Specific**
+   - Ensure Aqara M100 hub is operational
+   - Check Thread network is active in Aqara app
+   - Device must be in range of Thread Border Router
+   - Try temporarily powering off M100 hub during commissioning
 
-4. **Network issues**:
-   - Ensure device is close to Node-RED server during commissioning
-   - For Thread devices, ensure you have a Thread border router
-   - For WiFi devices, ensure same network as Node-RED
+4. **Pairing Code Issues**
+   - Use original pairing code from device label/manual
+   - For multi-admin: use sharing code from primary app
+   - Verify code format (11 digits for manual, MT: prefix for QR)
 
-5. **Docker specific - Enable host networking**:
-   ```yaml
-   # In docker-compose.yml
-   services:
-     nodered:
-       network_mode: host
-   ```
-   Then:
-   ```bash
-   docker-compose down
-   docker-compose up -d
-   ```
+### Key Confirmation Failed
 
-6. **Check Node-RED logs**:
-   - Look for specific error messages
-   - May indicate network, permissions, or protocol issues
+**Symptoms:**
+- Error: "Key confirmation failed" or "PASE protocol error"
+- Device found but commissioning fails during key exchange
+- Works in other apps (Alexa, Google) but not Node-RED
 
-### "Device not found" error
+**Solutions:**
 
-**Solutions**:
-1. Device is not in pairing mode
-2. Pairing code is incorrect
-3. Device is out of range
-4. Device already commissioned to another Matter controller
-5. Network firewall blocking Matter ports (UDP 5540, 5353)
+1. **Initial Commissioning Issues**
+   - Factory reset device (hold button 10+ seconds)
+   - Ensure device has no existing fabrics
+   - Use original pairing code, not sharing code
 
-### Commissioning takes forever
+2. **Multi-Admin Issues**
+   - Generate fresh sharing code from primary controller
+   - Use sharing code immediately (they expire quickly)
+   - Ensure device is in commissioning window from primary app
+   - Check device fabric limit (some devices limit to 2-3 controllers)
 
-**Normal behavior**: Commissioning can take 30-60 seconds.
+3. **Thread Device Specific**
+   - Aqara devices may have vendor lock-in
+   - Try temporarily powering off Aqara M100 hub
+   - Check Aqara app for "Allow other controllers" setting
+   - Device may need complete Thread network removal
 
-**If longer than 2 minutes**:
-1. Cancel and try again
-2. Move device closer to Node-RED server
-3. Check network connectivity
-4. Factory reset device and retry
+4. **Network Issues**
+   - Check for network interference
+   - Ensure stable network connection
+   - Try commissioning from different location
+   - Verify no VPN or proxy interference
+
+### Commissioning Timeout
+
+**Symptoms:**
+- Commissioning process hangs or times out
+- "Commissioning timed out" error after 60-120 seconds
+- Device appears to be responding but process doesn't complete
+
+**Solutions:**
+
+1. **Timeout Configuration**
+   - Thread devices need 120 seconds (automatic)
+   - WiFi devices use 60 seconds
+   - Check if timeout is appropriate for your device
+
+2. **Network Performance**
+   - Check network latency and stability
+   - Ensure sufficient bandwidth
+   - Avoid network congestion during commissioning
+
+3. **Device Issues**
+   - Verify device is powered on and stable
+   - Check device battery level
+   - Ensure device is not in sleep mode
+   - Try commissioning during low network usage
+
+4. **Thread Specific**
+   - Thread devices may need longer discovery time
+   - Ensure Thread Border Router is stable
+   - Check Thread network mesh quality
 
 ## Device State Issues
 
-### No state updates from device
+### Device Not Responding
 
-**Symptoms**: Device shows as connected but no messages output
+**Symptoms:**
+- Device shows as offline or disconnected
+- State reads fail with errors
+- No response to commands
 
-**Solutions**:
+**Solutions:**
 
-1. **Check output on change is enabled**:
-   - Edit matter device node
-   - Ensure "Output on state change" is checked
-   - Deploy
+1. **Connection Issues**
+   - Check device power and battery
+   - Verify network connectivity
+   - Ensure device is in range
+   - Try re-commissioning device
 
-2. **Try manual trigger**:
-   - Add an inject node
-   - Connect to matter device input
-   - Click inject to trigger read
-   - If this works, subscription may have failed
+2. **Thread Device Issues**
+   - Check Aqara M100 hub status
+   - Verify Thread network connectivity
+   - Ensure device is connected to Thread mesh
+   - Check Thread Border Router logs
 
-3. **Enable polling as backup**:
-   - Edit matter device node
-   - Uncheck "Output on state change"
-   - Set "Poll Interval" to 5 seconds
-   - Deploy
-   - Should now get updates every 5 seconds
+3. **Network Issues**
+   - Check firewall settings
+   - Verify mDNS resolution
+   - Test network connectivity to device
+   - Check for IP address conflicts
 
-4. **Check device is actually connected**:
-   - Node status should show green "ready" or state
-   - If red/yellow, device may be disconnected
+### State Changes Not Detected
 
-5. **Trigger the sensor**:
-   - Physically trigger the device (open/close door, etc.)
-   - Ensure sensor batteries are good
-   - Check sensor is properly installed (magnet aligned)
+**Symptoms:**
+- Device state doesn't update automatically
+- Manual reads work but subscriptions don't
+- Missing state change notifications
 
-### Device shows as disconnected
+**Solutions:**
 
-**Symptoms**: Red status, "device not found" errors
+1. **Subscription Issues**
+   - Ensure "Output on Change" is enabled
+   - Check subscription is active
+   - Verify device supports the cluster type
+   - Try polling mode as fallback
 
-**Solutions**:
+2. **Cluster Support**
+   - Verify device supports required cluster
+   - Check cluster adapter compatibility
+   - Ensure correct device type is selected
+   - Try different cluster types
 
-1. **Check device power**:
-   - Replace batteries if low
-   - Ensure powered devices are plugged in
+3. **Network Issues**
+   - Check for network interruptions
+   - Verify stable connection to device
+   - Ensure no firewall blocking
+   - Test with different polling intervals
 
-2. **Check range**:
-   - Move device closer to Node-RED server
-   - Add Thread border router if needed
-   - Check WiFi signal strength
+## Multi-Admin Issues
 
-3. **Restart Node-RED**:
-   - Sometimes reconnection fails
-   - Restart helps re-establish connection
+### Adding Additional Controller
 
-4. **Re-commission device**:
-   - If device keeps disconnecting
-   - Factory reset and commission again
+**Symptoms:**
+- Can't add Node-RED as additional controller
+- Sharing code doesn't work
+- Device rejects additional fabric
 
-## Docker-Specific Issues
+**Solutions:**
 
-### Can't commission devices in Docker
+1. **Sharing Code Issues**
+   - Generate fresh sharing code from primary app
+   - Use sharing code immediately (expires quickly)
+   - Ensure correct sharing code type
+   - Check primary controller supports sharing
 
-**Most common cause**: Network isolation
+2. **Device Limitations**
+   - Check device fabric limit (usually 16, some limit to 2-3)
+   - Remove unused fabrics from other controllers
+   - Ensure device supports multi-admin
+   - Try factory reset and re-commission
 
-**Solutions**:
+3. **Primary Controller Issues**
+   - Ensure primary controller is working
+   - Check primary controller supports sharing
+   - Verify device is properly commissioned to primary
+   - Try different primary controller
 
-1. **Use host networking** (recommended):
-   ```yaml
-   # docker-compose.yml
-   services:
-     nodered:
-       network_mode: host
-   ```
+### Fabric Management
 
-2. **Check container can reach devices**:
-   ```bash
-   docker exec nodered ping [device-ip]
-   ```
+**Symptoms:**
+- Device shows multiple fabrics
+- Confusion about which controller is primary
+- Device behavior inconsistent
 
-3. **Verify ports are accessible**:
-   - Matter uses UDP 5540, 5353
-   - Ensure these aren't blocked
+**Solutions:**
 
-### Device data lost after container restart
+1. **Fabric Cleanup**
+   - Remove unused fabrics from device
+   - Identify primary vs secondary controllers
+   - Clean up orphaned fabrics
+   - Consider factory reset for clean slate
 
-**Cause**: Non-persistent volume
+2. **Controller Coordination**
+   - Ensure controllers don't conflict
+   - Use different controller names
+   - Avoid simultaneous operations
+   - Check for controller conflicts
 
-**Solution**: Ensure `/data` is a persistent volume:
-```yaml
-volumes:
-  - nodered-data:/data  # Named volume (persistent)
-```
+## Thread-Specific Issues
 
-**NOT**:
-```yaml
-volumes:
-  - /tmp/nodered:/data  # Bad: /tmp may be cleared
-```
+### Thread Network Problems
 
-### Permission errors in Docker
+**Symptoms:**
+- Thread devices not connecting
+- Intermittent connectivity issues
+   - Thread mesh instability
 
-**Symptoms**: "EACCES" or "permission denied" errors
+**Solutions:**
 
-**Solutions**:
+1. **Thread Border Router**
+   - Ensure Aqara M100 hub is operational
+   - Check Thread network status in Aqara app
+   - Verify Thread Border Router is stable
+   - Consider additional Thread Border Routers
+
+2. **Thread Mesh**
+   - Check Thread mesh quality
+   - Ensure devices are in range
+   - Verify Thread network topology
+   - Check for Thread interference
+
+3. **Thread Credentials**
+   - Verify Thread network credentials
+   - Check Thread network key
+   - Ensure proper Thread network setup
+   - Consider Thread network reset
+
+### Aqara-Specific Issues
+
+**Symptoms:**
+- Aqara devices not commissioning
+- Vendor lock-in behavior
+- Thread network conflicts
+
+**Solutions:**
+
+1. **Vendor Lock-in**
+   - Aqara devices may prefer Aqara ecosystem
+   - Try temporarily disabling Aqara M100 hub
+   - Check Aqara app settings
+   - Consider factory reset approach
+
+2. **Aqara App Settings**
+   - Check "Allow other controllers" setting
+   - Verify sharing permissions
+   - Ensure proper Aqara app configuration
+   - Check Aqara app updates
+
+## Debugging
+
+### Enable Debug Logging
+
+1. **Node-RED Settings**
+   - Go to Node-RED settings
+   - Enable "Debug" logging level
+   - Check console for detailed logs
+
+2. **Matter Service Logs**
+   - Check Matter service initialization
+   - Verify commissioning process steps
+   - Look for network-related errors
+
+3. **Device Manager Logs**
+   - Check device registration
+   - Verify state reading attempts
+   - Look for subscription errors
+
+### Health Check
+
+Use the health check endpoint:
 ```bash
-# Fix permissions
-docker exec nodered chown -R node-red:node-red /data/node-red-contrib-matter
-docker exec nodered chown -R node-red:node-red /data/.node-red-matter
-docker restart nodered
+curl http://localhost:1880/matter-controller/[node-id]/health
 ```
 
-## Runtime Errors
+Response includes:
+- Service status
+- Device statistics
+- Network information
+- Thread environment detection
 
-### "Module not found" errors
+### Network Diagnostics
 
-**Solutions**:
-1. Check dependencies are installed:
+1. **mDNS Resolution**
    ```bash
-   cd ~/.node-red/node_modules/node-red-contrib-matter
-   npm install
-   ```
-2. For Docker:
-   ```bash
-   docker exec nodered sh -c "cd /data/node-red-contrib-matter && npm install"
-   docker restart nodered
-   ```
-
-### "Matter Controller not initialized"
-
-**Symptoms**: Yellow status "initializing" that never changes
-
-**Solutions**:
-1. Wait 30 seconds - initialization takes time
-2. Check Node-RED logs for errors
-3. Verify storage directory is writable:
-   ```bash
-   # On host
-   ls -la ~/.node-red/.node-red-matter/
+   # Test mDNS resolution
+   ping device-name.local
    
-   # In Docker
-   docker exec nodered ls -la /data/.node-red-matter/
+   # List mDNS services
+   dns-sd -B _matter._tcp
    ```
-4. If directory doesn't exist, create it:
+
+2. **Network Connectivity**
    ```bash
-   mkdir -p ~/.node-red/.node-red-matter
-   ```
-5. Restart Node-RED
-
-### Storage/permission errors
-
-**Symptoms**: Errors about writing to `.node-red-matter` directory
-
-**Solutions**:
-1. Ensure directory exists and is writable
-2. Check permissions:
-   ```bash
-   ls -la ~/.node-red/.node-red-matter/
-   ```
-3. Fix permissions if needed:
-   ```bash
-   chmod 755 ~/.node-red/.node-red-matter
+   # Test network connectivity
+   ping [device-ip]
+   
+   # Check UDP port 5540
+   nc -u [device-ip] 5540
    ```
 
-## Matter Protocol Issues
+3. **Thread Network**
+   - Check Aqara app for Thread network status
+   - Verify Thread Border Router connectivity
+   - Check Thread mesh quality
 
-### "Device type not supported"
+### Common Error Codes
 
-**Currently supported**:
-- Contact sensors (doors/windows)
-- Boolean state devices
+| Error Code | Description | Solution |
+|------------|-------------|----------|
+| `COMMISSIONING_FAILED` | General commissioning failure | Check device pairing mode and network |
+| `DEVICE_NOT_FOUND` | Device not discovered | Verify device is in pairing mode |
+| `KEY_CONFIRMATION_FAILED` | PASE protocol failure | Check pairing code and device state |
+| `TIMEOUT` | Commissioning timeout | Increase timeout or check network |
+| `VALIDATION_ERROR` | Invalid input data | Check pairing code format |
+| `NETWORK_ERROR` | Network connectivity issue | Check network and firewall |
 
-**Planned support**:
-- Lights, switches, plugs, sensors, locks
+## Getting Help
 
-**Workaround**: Use the device as a Boolean State type and handle conversion in Node-RED flow.
+### Before Asking for Help
 
-### "Cluster not found"
+1. **Check Logs**
+   - Enable debug logging
+   - Look for error messages
+   - Check network connectivity
 
-**Cause**: Device doesn't support expected cluster type
+2. **Test Basic Functionality**
+   - Try commissioning a simple device
+   - Test with different pairing codes
+   - Verify network connectivity
 
-**Solutions**:
-1. Try "Boolean State" device type instead of "Contact Sensor"
-2. Check device actually supports Matter (not just Thread)
-3. Verify device is Matter-certified
+3. **Gather Information**
+   - Device type and model
+   - Pairing code format
+   - Error messages
+   - Network configuration
 
-## General Debugging
+### Support Channels
 
-### Enable verbose logging
+- **GitHub Issues**: Report bugs and request features
+- **Documentation**: Check README and inline comments
+- **Test Suite**: Look at test examples for usage patterns
 
-Add to Node-RED settings.js:
-```javascript
-logging: {
-    console: {
-        level: "debug",
-        metrics: false,
-        audit: false
-    }
-}
-```
-
-### Check Node-RED logs
-
-**Standard installation**:
-```bash
-# Logs appear in terminal where Node-RED is running
-# Or check PM2/systemd logs if running as service
-```
-
-**Docker**:
-```bash
-docker logs nodered
-docker logs -f nodered  # Follow mode
-```
-
-### Collect diagnostic info
+### Providing Information
 
 When reporting issues, include:
-1. Node-RED version: `node-red --version`
-2. Node.js version: `node --version`
-3. Plugin version: Check package.json
-4. Installation method (npm, Docker, etc.)
-5. Error messages from logs
-6. Device type and manufacturer
-7. Steps to reproduce
-
-### Test with example flow
-
-1. Import `examples/contact-sensor-flow.json`
-2. Configure with your device
-3. Deploy and test
-4. If example works, issue is in your custom flow
-
-## Still Having Issues?
-
-1. Check [GitHub Issues](https://github.com/stuartb55/nodered-matter/issues)
-2. Search for similar problems
-3. Open a new issue with:
-   - Clear description of problem
-   - Steps to reproduce
-   - Error messages/logs
-   - System information
-   - What you've tried
-
-## Quick Checklist
-
-Before asking for help, verify:
-
-- [ ] Node.js version is 18 or higher
-- [ ] Plugin appears in Node-RED palette
-- [ ] Matter Controller is saved/deployed
-- [ ] Device is in pairing mode
-- [ ] Pairing code is correct
-- [ ] Network connectivity is good
-- [ ] For Docker: host networking is enabled
-- [ ] Logs checked for specific errors
-- [ ] Example flow tested
-
-## Useful Commands
-
-```bash
-# Check installation
-npm list node-red-contrib-matter
-
-# Reinstall dependencies
-cd ~/.node-red/node_modules/node-red-contrib-matter && npm install
-
-# View storage
-ls -la ~/.node-red/.node-red-matter/
-
-# Docker: check installation
-docker exec nodered npm list | grep matter
-
-# Docker: view logs
-docker logs -f nodered
-
-# Docker: access shell
-docker exec -it nodered /bin/bash
-
-# Test Node-RED connection
-curl http://localhost:1880
-```
-
-## Common Workflow Issues
-
-### Accidentally clicked "Cancel" instead of "Add"
-
-**Result**: Controller not saved, commissioning fails
-
-**Solution**: Reopen dialog, click "Add"
-
-### Forgot to deploy after adding controller
-
-**Result**: Controller not active
-
-**Solution**: Click "Deploy" button (top right in Node-RED)
-
-### Commissioned device but it's not in dropdown
-
-**Solution**: 
-1. Check controller is deployed
-2. Refresh the matter device node config
-3. Device should appear in dropdown
-4. If not, check controller's "Commissioned Devices" section
-
----
-
-**Last Updated**: 2025-10-11  
-**Plugin Version**: 0.1.0
-
+- Device type and model
+- Pairing code format (without actual code)
+- Error messages and logs
+- Network configuration
+- Steps to reproduce
+- Expected vs actual behavior

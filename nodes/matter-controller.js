@@ -1,21 +1,29 @@
+/**
+ * Refactored Matter Controller Node
+ * Uses the new service layer architecture for better separation of concerns
+ */
+
 module.exports = function(RED) {
-    const { CommissioningController, MatterServer } = require("@project-chip/matter-node.js");
-    const { StorageBackendDisk, StorageManager } = require("@project-chip/matter-node.js/storage");
-    const { VendorId } = require("@project-chip/matter-node.js/datatype");
-    const { CommissioningOptions } = require("@project-chip/matter.js/protocol");
-    const { BooleanStateCluster, ContactSensorTypeEnum } = require("@project-chip/matter.js/cluster");
     const path = require("path");
     const os = require("os");
-    const fs = require("fs");
+    
+    // Import our new service layer
+    const MatterService = require("../lib/matter-service");
+    const CommissioningService = require("../lib/commissioning-service");
+    const DeviceManager = require("../lib/device-manager");
+    const { CommissioningError, ValidationError } = require("../lib/errors");
 
     function MatterControllerNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
         
         node.name = config.name;
-        node.commissionedDevices = new Map(); // Store commissioned devices
-        node.deviceStates = new Map(); // Store current device states
         node.isInitialized = false;
+        
+        // Service layer instances
+        node.matterService = null;
+        node.commissioningService = null;
+        node.deviceManager = null;
         
         // Storage path in Node-RED user directory
         const storageDir = path.join(RED.settings.userDir || os.homedir(), ".node-red-matter");
@@ -23,374 +31,261 @@ module.exports = function(RED) {
         node.log(`Creating controller node with ID: ${node.id}, Name: ${node.name}`);
         node.log(`Initializing Matter Controller with storage: ${storageDir}`);
         
-        // Initialize Matter controller
+        // Initialize Matter controller using service layer
         async function initMatterController() {
             try {
-                // Ensure storage directory exists
-                try {
-                    if (!fs.existsSync(storageDir)) {
-                        fs.mkdirSync(storageDir, { recursive: true, mode: 0o755 });
-                        node.log(`Created storage directory: ${storageDir}`);
-                    }
-                } catch (fsError) {
-                    node.error(`Failed to create storage directory: ${fsError.message}`);
-                    node.status({ fill: "red", shape: "ring", text: "storage error" });
-                    return;
-                }
+                node.status({ fill: "yellow", shape: "ring", text: "initializing..." });
                 
-                // Create storage backend
-                const storageManager = new StorageManager(new StorageBackendDisk(storageDir));
-                await storageManager.initialize();
-                
-                // Create Matter server
-                node.matterServer = new MatterServer(storageManager);
-                
-                // Create commissioning controller
-                node.commissioningController = new CommissioningController({
+                // Create MatterService with proper configuration
+                node.matterService = new MatterService({
+                    storageDir: storageDir,
+                    controllerName: node.name || 'Node-RED Matter Controller',
                     autoConnect: false,
+                    mdns: {
+                        enableIpv4: true,
+                        enableIpv6: true,
+                        multicastInterface: 'auto'
+                    },
+                    logger: {
+                        info: (msg) => node.log(msg),
+                        warn: (msg) => node.warn(msg),
+                        error: (msg) => node.error(msg),
+                        debug: (msg) => node.debug(msg)
+                    }
                 });
                 
-                await node.matterServer.addCommissioningController(node.commissioningController);
-                await node.matterServer.start();
+                // Initialize MatterService
+                await node.matterService.initialize();
+                
+                // Create CommissioningService
+                node.commissioningService = new CommissioningService(node.matterService, {
+                    logger: {
+                        info: (msg) => node.log(msg),
+                        warn: (msg) => node.warn(msg),
+                        error: (msg) => node.error(msg),
+                        debug: (msg) => node.debug(msg)
+                    }
+                });
+                
+                // Create DeviceManager
+                node.deviceManager = new DeviceManager(node.matterService, {
+                    autoRestore: true,
+                    logger: {
+                        info: (msg) => node.log(msg),
+                        warn: (msg) => node.warn(msg),
+                        error: (msg) => node.error(msg),
+                        debug: (msg) => node.debug(msg)
+                    }
+                });
+                
+                // Initialize DeviceManager (this will restore devices)
+                await node.deviceManager.initialize();
                 
                 node.isInitialized = true;
                 node.status({ fill: "green", shape: "dot", text: "connected" });
                 node.log("Matter Controller initialized successfully");
                 
-                // Restore previously commissioned devices
-                await restoreCommissionedDevices();
-                
             } catch (error) {
                 node.error(`Failed to initialize Matter Controller: ${error.message}`);
                 node.status({ fill: "red", shape: "ring", text: "error" });
-            }
-        }
-        
-        // Restore commissioned devices from storage
-        async function restoreCommissionedDevices() {
-            try {
-                const nodes = await node.commissioningController.getCommissionedNodes();
-                node.log(`Found ${nodes.length} commissioned device(s)`);
-
-                for (const nodeId of nodes) {
-                    try {
-                        const device = await node.commissioningController.getConnectedNode(nodeId);
-                        node.commissionedDevices.set(nodeId.toString(), {
-                            nodeId: nodeId,
-                            device: device,
-                            name: `Device-${nodeId}`, // Default name since we don't store it
-                            connected: true,
-                            commissioned: new Date().toISOString(),
-                            restored: true,
-                            vendorId: null, // We don't have this info for restored devices
-                            productId: null
-                        });
-                        node.log(`Restored device: ${nodeId}`);
-                    } catch (err) {
-                        node.warn(`Could not connect to device ${nodeId}: ${err.message}`);
-                        // Remove from storage if device is no longer available
-                        try {
-                            await node.commissioningController.removeNode(nodeId);
-                            node.log(`Removed unavailable device ${nodeId} from storage`);
-                        } catch (removeErr) {
-                            node.warn(`Could not remove device ${nodeId}: ${removeErr.message}`);
-                        }
-                    }
+                
+                // Provide specific error guidance
+                if (error instanceof CommissioningError) {
+                    node.error(`Commissioning error: ${error.message}`);
+                } else if (error instanceof ValidationError) {
+                    node.error(`Configuration error: ${error.message}`);
                 }
-            } catch (error) {
-                node.error(`Error restoring devices: ${error.message}`);
             }
         }
         
-        // Commission a new device using pairing code (supports both initial and multi-admin)
+        // Commission a new device using the CommissioningService
         node.commissionDevice = async function(pairingCode, deviceName, options = {}) {
             if (!node.isInitialized) {
                 throw new Error("Matter Controller not initialized");
             }
             
             try {
-                // Don't log the actual pairing code for security
-                const codeType = pairingCode.startsWith('MT:') ? 'QR Code' : 'Manual Code';
-                const isMultiAdmin = options.multiAdmin || false;
+                node.status({ fill: "yellow", shape: "ring", text: options.multiAdmin ? "adding fabric..." : "commissioning..." });
                 
-                node.log(`${isMultiAdmin ? 'Multi-admin commissioning' : 'Commissioning'} device with ${codeType} (code length: ${pairingCode.length})`);
-                node.status({ fill: "yellow", shape: "ring", text: isMultiAdmin ? "adding fabric..." : "commissioning..." });
+                // Use CommissioningService for commissioning
+                const result = await node.commissioningService.commissionDevice(pairingCode, deviceName, options);
                 
-                // Parse the pairing code - could be QR code or manual code
-                let commissioningData;
+                // Add device to DeviceManager
+                const controller = node.matterService.getCommissioningController();
+                const device = await controller.getConnectedNode(result.nodeId);
                 
-                if (pairingCode.startsWith('MT:')) {
-                    // QR Code format
-                    const { QrPairingCodeCodec } = require("@project-chip/matter-node.js/schema");
-                    commissioningData = QrPairingCodeCodec.decode(pairingCode);
-                } else {
-                    // Manual pairing code (11 digits)
-                    const { ManualPairingCodeCodec } = require("@project-chip/matter-node.js/schema");
-                    commissioningData = ManualPairingCodeCodec.decode(pairingCode);
-                }
-                
-                // Only log non-sensitive parts of commissioning data
-                const discriminator = commissioningData.discriminator || commissioningData.shortDiscriminator;
-                node.log(`Commissioning data parsed successfully (discriminator: ${discriminator})`);
-
-                // Thread device detection and analysis
-                const vendorId = commissioningData.vendorId;
-                if (vendorId === 4447) { // Aqara vendor ID
-                    node.log(`Thread device detected - Aqara vendor ID: ${vendorId}`);
-                    node.log(`For Thread devices, ensure Aqara M100 hub is available and Thread network is operational`);
-                }
-                
-                // Prepare commissioning options
-                const commissionOptions = {
-                    discovery: {
-                        identifierData: commissioningData,
-                    },
-                };
-                
-                // For multi-admin, we may need to specify additional options
-                // Matter.js handles this automatically, but we log it for clarity
-                if (isMultiAdmin) {
-                    node.log('Multi-admin mode: Adding Node-RED as additional fabric to existing device');
-                }
-                
-                // Commission the device using parsed data
-                // This works for both initial and multi-admin commissioning
-                // Matter.js will detect if device is already commissioned and handle accordingly
-                const nodeId = await node.commissioningController.commissionNode(commissionOptions);
-                
-                node.log(`Device commissioned successfully with NodeId: ${nodeId}`);
-                
-                // Connect to the device
-                const device = await node.commissioningController.getConnectedNode(nodeId);
-                
-                // Get fabric information to confirm multi-admin setup
-                let fabricInfo = null;
-                try {
-                    const endpoints = device.getDevices();
-                    if (endpoints.length > 0) {
-                        // Try to get fabric count from operational credentials cluster
-                        const clusters = endpoints[0].getAllClusterClients();
-                        node.log(`Device has ${endpoints.length} endpoint(s) with ${clusters.length} cluster(s)`);
-                    }
-                } catch (err) {
-                    node.warn(`Could not read fabric information: ${err.message}`);
-                }
-                
-                // Store device info
-                node.commissionedDevices.set(nodeId.toString(), {
-                    nodeId: nodeId,
-                    device: device,
-                    name: deviceName || `Device-${nodeId}`,
-                    connected: true,
-                    commissioned: new Date().toISOString(),
-                    multiAdmin: isMultiAdmin,
-                    fabricInfo: fabricInfo,
-                    vendorId: commissioningData.vendorId,
-                    productId: commissioningData.productId
-                });
+                await node.deviceManager.addDevice(result.nodeId, device, deviceName, result.commissioningData);
                 
                 node.status({ fill: "green", shape: "dot", text: "connected" });
                 
-                return {
-                    success: true,
-                    nodeId: nodeId.toString(),
-                    message: isMultiAdmin ? 
-                        "Device added to Node-RED fabric (multi-admin)" : 
-                        "Device commissioned successfully",
-                    multiAdmin: isMultiAdmin
-                };
+                return result;
                 
             } catch (error) {
                 node.status({ fill: "red", shape: "ring", text: "commission failed" });
-
-                // Enhanced error handling for common issues
-                let errorMessage = error.message;
-
-                if (errorMessage.includes('No device discovered')) {
-                    errorMessage = 'Device discovery failed - device not found during scan. ' +
-                                 'Ensure device is in pairing mode (hold button 5+ seconds) and on same network.';
-                } else if (errorMessage.includes('key confirmation')) {
-                    if (isMultiAdmin) {
-                        errorMessage = 'Multi-admin commissioning failed: Key confirmation rejected. ' +
-                                     'Common issues: 1) Device fabric limit reached (try removing from other controllers), ' +
-                                     '2) Sharing code expired (generate fresh code), ' +
-                                     '3) Device not in commissioning window from primary controller.';
-                    } else {
-                        errorMessage = 'Initial commissioning failed: Incorrect pairing code or device not in pairing mode. ' +
-                                     'Ensure device is factory reset and in pairing mode.';
-                    }
-                } else if (errorMessage.includes('timeout')) {
-                    errorMessage = 'Commissioning timed out: Device not responding. ' +
-                                 'Check network connectivity and ensure device is powered on.';
-                } else if (errorMessage.includes('already commissioned')) {
-                    errorMessage = 'Device already commissioned to this controller. ' +
-                                 'For multi-admin: Use sharing code from primary controller.';
+                
+                // Enhanced error handling using our error types
+                if (error instanceof CommissioningError) {
+                    node.error(`Commissioning failed: ${error.message}`);
+                    throw error;
+                } else if (error instanceof ValidationError) {
+                    node.error(`Validation error: ${error.message}`);
+                    throw error;
+                } else {
+                    node.error(`Unexpected error: ${error.message}`);
+                    throw new Error(`Commissioning failed: ${error.message}`);
                 }
-
-                node.error(`Commissioning failed: ${errorMessage}`);
-                throw new Error(errorMessage);
             }
         };
         
-        // Get device by nodeId
+        // Get device by nodeId using DeviceManager
         node.getDevice = function(nodeId) {
-            return node.commissionedDevices.get(nodeId);
+            if (!node.isInitialized) {
+                throw new Error("Matter Controller not initialized");
+            }
+            return node.deviceManager.getDevice(nodeId);
         };
         
-        // Get all commissioned devices
+        // Get all commissioned devices using DeviceManager
         node.getDevices = function() {
-            const devices = [];
-            node.commissionedDevices.forEach((device, nodeId) => {
-                devices.push({
-                    nodeId: nodeId,
-                    name: device.name,
-                    connected: device.connected,
-                    commissioned: device.commissioned
-                });
-            });
-            return devices;
+            if (!node.isInitialized) {
+                return [];
+            }
+            return node.deviceManager.getAllDevices().map(device => ({
+                nodeId: device.nodeId,
+                name: device.name,
+                connected: device.connected,
+                commissioned: device.commissioned,
+                capabilities: device.capabilities.clusters,
+                vendorId: device.vendorId,
+                productId: device.productId
+            }));
         };
 
         // Check if controller is dealing with Thread devices
         node.isThreadEnvironment = function() {
-            // Check if any commissioned devices are Aqara (Thread devices)
-            for (const [nodeId, deviceInfo] of node.commissionedDevices) {
-                // Aqara devices use Thread networking
-                if (deviceInfo.vendorId === 4447) {
-                    return true;
-                }
+            if (!node.isInitialized) {
+                return false;
             }
-            return false;
+            
+            const devices = node.deviceManager.getAllDevices();
+            return devices.some(device => device.vendorId === 4447); // Aqara vendor ID
         };
 
         // Get Thread-specific guidance for commissioned devices
         node.getThreadGuidance = function() {
-            if (node.isThreadEnvironment()) {
-                return {
-                    threadDetected: true,
-                    message: "Thread devices detected. Ensure Aqara M100 hub is operational and Thread network is active.",
-                    recommendations: [
-                        "Check Aqara app for M100 hub status",
-                        "Ensure Thread network is operational",
-                        "Verify device is in range of Thread Border Router",
-                        "Consider factory reset if multi-admin issues persist"
-                    ]
-                };
+            if (!node.isThreadEnvironment()) {
+                return { threadDetected: false };
             }
-            return { threadDetected: false };
+            
+            return {
+                threadDetected: true,
+                message: "Thread devices detected. Ensure Aqara M100 hub is operational and Thread network is active.",
+                recommendations: [
+                    "Check Aqara app for M100 hub status",
+                    "Ensure Thread network is operational", 
+                    "Verify device is in range of Thread Border Router",
+                    "Consider factory reset if multi-admin issues persist"
+                ]
+            };
         };
         
-        // Read device state
+        // Read device state using DeviceManager
         node.readDeviceState = async function(nodeId, clusterId) {
-            const deviceInfo = node.commissionedDevices.get(nodeId);
-            if (!deviceInfo) {
-                throw new Error(`Device ${nodeId} not found`);
+            if (!node.isInitialized) {
+                throw new Error("Matter Controller not initialized");
             }
             
             try {
-                const device = deviceInfo.device;
+                const state = await node.deviceManager.getDeviceState(nodeId);
                 
-                // For contact sensors, read BooleanState cluster
-                if (clusterId === 'contact' || clusterId === 'booleanState') {
-                    const endpoints = device.getDevices();
-                    
-                    // Find endpoint with BooleanState cluster
-                    for (const endpoint of endpoints) {
-                        const clusters = endpoint.getAllClusterClients();
-                        const booleanStateCluster = clusters.find(c => 
-                            c.id === BooleanStateCluster.id
-                        );
-                        
-                        if (booleanStateCluster) {
-                            const state = await booleanStateCluster.getStateValueAttribute();
-                            return {
-                                nodeId: nodeId,
-                                type: 'contact',
-                                state: state,
-                                contact: state ? 'open' : 'closed',
-                                timestamp: new Date().toISOString()
-                            };
-                        }
-                    }
+                // Return cluster-specific state if requested
+                if (clusterId && state.clusters[clusterId]) {
+                    return {
+                        nodeId: nodeId,
+                        cluster: clusterId,
+                        state: state.clusters[clusterId],
+                        timestamp: state.timestamp
+                    };
                 }
                 
-                throw new Error(`Cluster ${clusterId} not found on device`);
+                return state;
                 
             } catch (error) {
                 throw new Error(`Failed to read device state: ${error.message}`);
             }
         };
         
-        // Subscribe to device state changes
+        // Subscribe to device state changes using DeviceManager
         node.subscribeToDevice = async function(nodeId, clusterId, callback) {
-            const deviceInfo = node.commissionedDevices.get(nodeId);
-            if (!deviceInfo) {
-                throw new Error(`Device ${nodeId} not found`);
+            if (!node.isInitialized) {
+                throw new Error("Matter Controller not initialized");
             }
             
             try {
-                const device = deviceInfo.device;
+                await node.deviceManager.subscribeToDevice(nodeId, callback);
                 
-                if (clusterId === 'contact' || clusterId === 'booleanState') {
-                    const endpoints = device.getDevices();
-                    
-                    for (const endpoint of endpoints) {
-                        const clusters = endpoint.getAllClusterClients();
-                        const booleanStateCluster = clusters.find(c => 
-                            c.id === BooleanStateCluster.id
-                        );
-                        
-                        if (booleanStateCluster) {
-                            // Subscribe to state changes
-                            const unsubscribe = await booleanStateCluster.subscribeStateValueAttribute(
-                                (value) => {
-                                    const state = {
-                                        nodeId: nodeId,
-                                        type: 'contact',
-                                        state: value,
-                                        contact: value ? 'open' : 'closed',
-                                        timestamp: new Date().toISOString()
-                                    };
-                                    
-                                    node.deviceStates.set(nodeId, state);
-                                    callback(state);
-                                },
-                                0, // minIntervalFloor
-                                60 // maxIntervalCeiling (seconds)
-                            );
-                            
-                            node.log(`Subscribed to device ${nodeId} state changes`);
-                            
-                            // Return an object with unsubscribe method
-                            return {
-                                unsubscribe: async () => {
-                                    try {
-                                        if (typeof unsubscribe === 'function') {
-                                            await unsubscribe();
-                                        }
-                                        node.log(`Unsubscribed from device ${nodeId}`);
-                                    } catch (err) {
-                                        node.warn(`Error unsubscribing from device ${nodeId}: ${err.message}`);
-                                    }
-                                }
-                            };
+                node.log(`Subscribed to device ${nodeId} state changes`);
+                
+                // Return unsubscribe function
+                return {
+                    unsubscribe: async () => {
+                        try {
+                            await node.deviceManager.unsubscribeFromDevice(nodeId);
+                            node.log(`Unsubscribed from device ${nodeId}`);
+                        } catch (err) {
+                            node.warn(`Error unsubscribing from device ${nodeId}: ${err.message}`);
                         }
                     }
-                }
-                
-                throw new Error(`Cluster ${clusterId} not found on device`);
+                };
                 
             } catch (error) {
                 throw new Error(`Failed to subscribe to device: ${error.message}`);
+            }
+        };
+
+        // Get device statistics
+        node.getDeviceStats = function() {
+            if (!node.isInitialized) {
+                return { total: 0, connected: 0, restored: 0 };
+            }
+            return node.deviceManager.getDeviceStats();
+        };
+
+        // Health check
+        node.healthCheck = async function() {
+            if (!node.isInitialized) {
+                return { status: 'not_initialized', healthy: false };
+            }
+            
+            try {
+                const matterHealth = await node.matterService.healthCheck();
+                const deviceStats = node.getDeviceStats();
+                
+                return {
+                    ...matterHealth,
+                    deviceStats: deviceStats,
+                    threadEnvironment: node.isThreadEnvironment()
+                };
+            } catch (error) {
+                return { 
+                    status: 'unhealthy', 
+                    healthy: false, 
+                    error: error.message 
+                };
             }
         };
         
         // Cleanup on close
         node.on('close', async function(done) {
             try {
-                if (node.matterServer) {
-                    await node.matterServer.close();
+                if (node.deviceManager) {
+                    await node.deviceManager.close();
                 }
+                
+                if (node.matterService) {
+                    await node.matterService.close();
+                }
+                
                 node.log("Matter Controller closed");
                 done();
             } catch (error) {
@@ -409,7 +304,7 @@ module.exports = function(RED) {
     RED.httpAdmin.post("/matter-controller/:id/commission", RED.auth.needsPermission('matter-controller.write'), async function(req, res) {
         RED.log.info(`[Matter] Commission request for node ID: ${req.params.id}`);
         const node = RED.nodes.getNode(req.params.id);
-        RED.log.info(`[Matter] Found node: ${node ? "YES" : "NO"}`);
+        
         if (!node) {
             RED.log.error(`[Matter] ERROR: Controller node not found for ID: ${req.params.id}`);
             res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
@@ -432,7 +327,7 @@ module.exports = function(RED) {
         if (!isQRCode && !isManualCode) {
             res.status(400).json({ 
                 error: "Invalid pairing code format",
-                details: "Expected QR code starting with 'MT:' or 11-digit manual pairing code"
+                details: "Expected QR code starting with 'MT:' or 8-11 digit manual pairing code"
             });
             return;
         }
@@ -447,14 +342,25 @@ module.exports = function(RED) {
             const result = await node.commissionDevice(sanitizedCode, deviceName, options);
             res.json(result);
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            // Return structured error information
+            const errorResponse = {
+                error: error.message,
+                type: error.constructor.name,
+                code: error.code || 'UNKNOWN_ERROR'
+            };
+            
+            if (error.details) {
+                errorResponse.details = error.details;
+            }
+            
+            res.status(500).json(errorResponse);
         }
     });
     
     RED.httpAdmin.get("/matter-controller/:id/devices", RED.auth.needsPermission('matter-controller.read'), function(req, res) {
         RED.log.info(`[Matter] Devices request for node ID: ${req.params.id}`);
         const node = RED.nodes.getNode(req.params.id);
-        RED.log.info(`[Matter] Found node: ${node ? "YES - initialized: " + node.isInitialized : "NO"}`);
+        
         if (!node) {
             RED.log.error(`[Matter] ERROR: Controller node not found for ID: ${req.params.id}`);
             res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
@@ -462,7 +368,34 @@ module.exports = function(RED) {
         }
         
         const devices = node.getDevices();
-        res.json({ devices, initialized: node.isInitialized });
+        const stats = node.getDeviceStats();
+        
+        res.json({ 
+            devices, 
+            initialized: node.isInitialized,
+            stats: stats,
+            threadEnvironment: node.isThreadEnvironment()
+        });
+    });
+
+    // Health check endpoint
+    RED.httpAdmin.get("/matter-controller/:id/health", RED.auth.needsPermission('matter-controller.read'), async function(req, res) {
+        const node = RED.nodes.getNode(req.params.id);
+        
+        if (!node) {
+            res.status(404).json({ error: "Controller node not found", nodeId: req.params.id });
+            return;
+        }
+        
+        try {
+            const health = await node.healthCheck();
+            res.json(health);
+        } catch (error) {
+            res.status(500).json({ 
+                status: 'error', 
+                healthy: false, 
+                error: error.message 
+            });
+        }
     });
 };
-
