@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@project-chip/matter-node.js": "^0.9.0",
-    "@project-chip/matter.js": "^0.9.0"
+    "@project-chip/matter.js": "^0.15.0"
   },
   "keywords": [
     "node-red",
